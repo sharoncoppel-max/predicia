@@ -2640,14 +2640,11 @@ async function tryFinnhubBatch(symbols, apiKey, onProgress) {
   return out;
 }
 
-// Toby's Finnhub key — baked in for convenience. localStorage can override.
-// If you fork this file: rotate the key at finnhub.io/dashboard
+// Toby's Finnhub key — baked in so live prices work for everyone with zero
+// setup (private repo, single shared key by design — no per-user keys).
 const DEFAULT_FINNHUB_KEY = "d8k5t1pr01qjgd6rlp7gd8k5t1pr01qjgd6rlp80";
 function getApiKey() {
-  try { return localStorage.getItem("predicia-finnhub-key") || DEFAULT_FINNHUB_KEY; } catch (e) { return DEFAULT_FINNHUB_KEY; }
-}
-function setApiKey(k) {
-  try { localStorage.setItem("predicia-finnhub-key", k); } catch (e) {}
+  return DEFAULT_FINNHUB_KEY;
 }
 
 // Finnhub uses native ticker format (BRK.A is fine, not BRK-A).
@@ -2723,8 +2720,9 @@ async function _refreshRealPrices() {
   }
 
   if (Object.keys(merged).length < 5) {
-    setLiveStatus("offline", apiKey ? "API OFFLINE" : "DEMO · setup");
-    if (!apiKey) showApiKeyPrompt();
+    // Both providers came up dry (offline or rate-limited). Keep the sample
+    // prices already on screen; the status pill shows it's not live.
+    setLiveStatus("offline", "API OFFLINE");
     return false;
   }
 
@@ -2753,45 +2751,6 @@ async function _refreshRealPrices() {
   return true;
 }
 
-function showApiKeyPrompt() {
-  // Don't double-prompt
-  if (document.getElementById("apiKeyPrompt")) return;
-  const modal = document.getElementById("modalBackdrop");
-  document.getElementById("modalContent").innerHTML = `
-    <h3 id="apiKeyPrompt">🌐 Set up live prices</h3>
-    <p class="modal-sub">
-      Browsers can't directly fetch Yahoo Finance (CORS blocks it) and public proxies are rate-limited.
-      The reliable fix: paste a <b>free Finnhub API key</b>. Takes 30 seconds.
-    </p>
-    <ol style="color:var(--text-2); font-size: 14px; line-height: 1.7; padding-left: 18px; margin: 12px 0;">
-      <li>Go to <a href="https://finnhub.io/register" target="_blank" style="color: var(--brand)">finnhub.io/register</a> and sign up (free, no card)</li>
-      <li>Copy your API key from the dashboard</li>
-      <li>Paste below and save</li>
-    </ol>
-    <div class="modal-input-group">
-      <label>Finnhub API key (stored only in your browser)</label>
-      <input type="text" id="apiKeyInput" placeholder="paste here..." value="${getApiKey()}" />
-    </div>
-    <p style="color: var(--text-3); font-size: 12px; line-height: 1.5;">
-      Free tier: 60 calls/min, 30 calls/sec, US stocks only. We use about 60 calls per refresh.
-      Some non-US tickers (EZJ.L, HM-B) won't have live data.
-    </p>
-    <div class="modal-actions">
-      <button class="btn-cancel" id="apiKeyCancel">Skip — keep demo prices</button>
-      <button class="btn-confirm-buy" id="apiKeySave">Save key &amp; fetch prices</button>
-    </div>
-  `;
-  modal.style.display = "grid";
-  document.getElementById("apiKeyCancel").addEventListener("click", () => {
-    closeModal();
-  });
-  document.getElementById("apiKeySave").addEventListener("click", () => {
-    const k = document.getElementById("apiKeyInput").value.trim();
-    if (k) setApiKey(k);
-    closeModal();
-    refreshRealPrices();
-  });
-}
 
 // Auto-fetch on page load (after initial render)
 setTimeout(() => { refreshRealPrices().catch(e => console.error(e)); }, 1500);
