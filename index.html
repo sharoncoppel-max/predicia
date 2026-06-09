@@ -3104,7 +3104,7 @@ function verdictFromScore(score) {
 function confidenceFromScore(score, dampening) {
   let c = Math.abs(score) * 4.5 * 1.05;
   c *= (dampening || 1.0);
-  return Math.min(0.999, c);
+  return Math.min(0.94, c);
 }
 
 // COMBINE — weighted sum, then confidence boosted by how many signals agree.
@@ -3151,7 +3151,9 @@ function predicia(company) {
   if (meaningful >= 8 && agreement >= 0.90) confidence += 0.08;
   if (meaningful >= 9 && agreement >= 0.95) confidence += 0.05;
   if (meaningful === 10 && agreement === 1)  confidence += 0.04;
-  confidence = Math.min(1.0, confidence);
+  // Cap at 0.94 — matches the documented promise that Predicia never claims
+  // more than 94% certainty (the market is genuinely unpredictable).
+  confidence = Math.min(0.94, confidence);
 
   // Multi-model ensemble: compute Graham Value + Carhart Momentum alongside
   const grahamScore = scoreGrahamValue(s);
