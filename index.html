@@ -2527,14 +2527,22 @@ async function tryFinnhubBatch(symbols, apiKey, onProgress) {
   // Serial requests with progress callback so UI can update as prices arrive.
   const out = {};
   const ordered = sortByPriority(symbols);
-  const THROTTLE_MS = 1050;
+  const BASE_THROTTLE_MS = 1050;
+  const MAX_RETRIES = 3;
+  let throttleMs = BASE_THROTTLE_MS;
+  let retries = 0;
 
   for (let i = 0; i < ordered.length; i++) {
     const sym = ordered[i];
+    let rateLimited = false;
     try {
       const url = `https://finnhub.io/api/v1/quote?symbol=${encodeURIComponent(sym)}&token=${apiKey}`;
       const resp = await fetch(url);
-      if (resp.ok) {
+      if (resp.status === 429) {
+        // Rate limited (shared key). Back off and retry this symbol next loop
+        // instead of hammering at the same cadence.
+        rateLimited = true;
+      } else if (resp.ok) {
         const j = await resp.json();
         if (typeof j.c === "number" && j.c > 0) {
           out[sym] = { price: j.c, source: "finnhub" };
@@ -2544,8 +2552,20 @@ async function tryFinnhubBatch(symbols, apiKey, onProgress) {
 
     if (onProgress) onProgress(i + 1, ordered.length, sym, out[sym]);
 
+    if (rateLimited && retries < MAX_RETRIES) {
+      // Exponential backoff, capped at 8s, then retry the same symbol.
+      retries++;
+      throttleMs = Math.min(throttleMs * 2, 8000);
+      await new Promise(r => setTimeout(r, throttleMs));
+      i--;
+      continue;
+    }
+    // Recovered (or gave up on this symbol) — reset and ease back to normal cadence.
+    retries = 0;
+    throttleMs = Math.max(BASE_THROTTLE_MS, throttleMs / 2);
+
     if (i < ordered.length - 1) {
-      await new Promise(r => setTimeout(r, THROTTLE_MS));
+      await new Promise(r => setTimeout(r, throttleMs));
     }
   }
   return out;
@@ -2570,7 +2590,20 @@ function finnhubSymbolFor(ticker) {
   return ticker;                                 // AAPL, NVDA, BRK.A, etc.
 }
 
+let refreshInFlight = false;
 async function refreshRealPrices() {
+  // Guard against overlapping refreshes (auto-load + LIVE-pill clicks + key save).
+  // Two concurrent loops would double the request rate and trip 429s.
+  if (refreshInFlight) return false;
+  refreshInFlight = true;
+  try {
+    return await _refreshRealPrices();
+  } finally {
+    refreshInFlight = false;
+  }
+}
+
+async function _refreshRealPrices() {
   setLiveStatus("loading", "FETCHING…");
   const apiKey = getApiKey();
   let merged = {}; // Keyed by COMPANY TICKER (not Yahoo symbol)
