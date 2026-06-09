@@ -4,8 +4,12 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>Predicia — Smart Stock Predictions</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet" />
 <style>
   :root {
+    --font-display: "Space Grotesk", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
     --bg-start: #f6f8fc;
     --bg-end: #ffffff;
     --card: #ffffff;
@@ -1564,6 +1568,12 @@
       scroll-behavior: auto !important;
     }
     .nebula { animation: none !important; }
+  }
+
+  /* Display typeface for headings + wordmark (body/data stay on the system stack) */
+  h1, h2, h3, h4, h5, h6, .logo-text {
+    font-family: var(--font-display);
+    letter-spacing: -0.01em;
   }
 
   /* Keyboard focus: visible ring on every interactive element (none existed before) */
