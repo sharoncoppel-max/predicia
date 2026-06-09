@@ -1553,6 +1553,18 @@
     .price { font-size: 20px; }
   }
 
+  /* Respect reduced-motion: stop the perpetual nebula drift and trim transitions.
+     The bg-canvas already freezes via JS; the CSS animations did not. */
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+      animation-duration: 0.001ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.001ms !important;
+      scroll-behavior: auto !important;
+    }
+    .nebula { animation: none !important; }
+  }
+
   /* Keyboard focus: visible ring on every interactive element (none existed before) */
   a:focus-visible,
   button:focus-visible,
