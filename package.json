@@ -1,0 +1,9 @@
+{
+  "name": "predicia",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Predicia — educational stock-prediction demo",
+  "scripts": {
+    "test": "bun test"
+  }
+}
