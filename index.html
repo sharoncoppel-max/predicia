@@ -1682,10 +1682,10 @@
    PREDICIA
    ============================================================
    Single-page stock prediction demo.
-   - 10 famous companies
+   - 66 famous companies (63 fetch live US prices; 3 non-US use sample data)
    - 30 days of sample price data per company
    - Real recent events tagged positive/negative
-   - 4 math signals combined into a "Predicia Score"
+   - 10 math signals combined into a "Predicia Score"
 
    For a school project. Not for real investing!
    ============================================================ */
@@ -2582,7 +2582,7 @@ async function refreshRealPrices() {
     const usSymbols = COMPANIES.map(c => finnhubSymbolFor(c.ticker)).filter(s => s);
     const finnhubResult = await tryFinnhubBatch(usSymbols, apiKey, (done, total, sym, quote) => {
       // Update status pill
-      setLiveStatus("loading", "FETCHING " + done + "/" + total);
+      setLiveStatus("loading", "FETCHING " + done + "/" + total + " prices");
       // Apply the quote we just got to the live data so the DOM can show it
       if (quote && quote.price > 0) {
         const co = COMPANIES.find(x => finnhubSymbolFor(x.ticker) === sym);
