@@ -1651,7 +1651,7 @@
   <section class="how">
     <h2>How Predicia works (the math!)</h2>
     <div class="engine-badge">
-      <b>Predicia Engine v3.0</b> · Powered by <b>Ensemble Forecasting</b> + <b>Monte Carlo Simulation</b> + <b>Multi-Factor Signal Analysis</b> + <b>Sentiment Aggregation</b>
+      <b>Predicia Engine v3.1</b> · Powered by <b>Ensemble Forecasting</b> + <b>Monte Carlo Simulation</b> + <b>Multi-Factor Signal Analysis</b> + <b>Sentiment Aggregation</b>
     </div>
     <p>These are the same kinds of math techniques used by Wall Street's biggest hedge funds (like Renaissance Technologies and Two Sigma) and by Nobel Prize winners like <b>Eugene Fama</b> and <b>Harry Markowitz</b> who invented modern finance. The idea: combine LOTS of different signals together — that's called an <b>ensemble</b>. No single signal is perfect, but if 10 signals all agree, you can be much more confident than relying on any one.</p>
     <p>Predicia mixes <b>10 different signals</b>. Each signal becomes a number from <b>-1</b> (very bad sign) to <b>+1</b> (very good sign), and they get added up with different weights to make the final Predicia Score:</p>
@@ -3143,7 +3143,7 @@ function predicia(company) {
   const agreement = meaningful > 0 ? agreeing / meaningful : 0;
 
   // Confidence formula — Predicia is more sure when many signals all agree.
-  // Engine v3.0: aggressive boost so strong alignments hit 100%.
+  // Engine v3.1: strong alignments approach (but never exceed) the 94% cap.
   let confidence = Math.abs(score) * 4.5 * (1.00 + 0.30 * agreement);
   // Bonuses stack — perfect alignment can reach 100%
   if (meaningful >= 5 && agreement > 0.70) confidence += 0.18;
