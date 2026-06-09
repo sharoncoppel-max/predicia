@@ -3034,18 +3034,7 @@ function calcTimingForecast(s) {
 // All technical signals use the LAST 30 days (most recent window).
 function predicia(company) {
   const win = company.prices.slice(-30);  // last 30 days
-  const s = {
-    momentum: calcMomentum(win),
-    trend:    calcTrend(win),
-    news:     calcNews(company.events),
-    sector:   calcSectorStrength(company, COMPANIES),
-    rangePos: calcRangePosition(win),
-    streak:   calcStreak(win),
-    cross:    calcMACross(win),
-    analyst:  calcAnalystRating(company),
-    buzz:     calcSocialBuzz(company),
-    calmness: calcCalmness(win)
-  };
+  const s = buildSignals(company, win, calcSectorStrength(company, COMPANIES));
 
   let score = 0;
   for (const k in WEIGHTS) score += WEIGHTS[k] * s[k];
@@ -3265,18 +3254,7 @@ function calcSectorStrengthAt(company, allCompanies, day) {
 
 function signalsAt(company, day) {
   const win = company.prices.slice(day - 30, day);
-  return {
-    momentum: calcMomentum(win),
-    trend:    calcTrend(win),
-    news:     calcNews(company.events),
-    sector:   calcSectorStrengthAt(company, COMPANIES, day),
-    rangePos: calcRangePosition(win),
-    streak:   calcStreak(win),
-    cross:    calcMACross(win),
-    analyst:  calcAnalystRating(company),
-    buzz:     calcSocialBuzz(company),
-    calmness: calcCalmness(win)
-  };
+  return buildSignals(company, win, calcSectorStrengthAt(company, COMPANIES, day));
 }
 
 // scorePredicia lives in engine.js (loaded above).

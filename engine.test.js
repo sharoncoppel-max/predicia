@@ -12,6 +12,7 @@ const {
   seededRandom,
   calcMomentum, calcTrend, calcCalmness, calcNews, calcSectorStrength,
   calcRangePosition, calcStreak, calcMACross, calcAnalystRating, calcSocialBuzz,
+  buildSignals,
   WEIGHTS, scorePredicia, scoreGrahamValue, scoreCarhartMomentum,
   verdictFromScore, confidenceFromScore,
 } = engine;
@@ -124,6 +125,26 @@ describe("seeded signals (analyst, buzz)", () => {
   test("social buzz is deterministic and bounded", () => {
     expect(calcSocialBuzz(co)).toBe(calcSocialBuzz(co));
     expect(inRange(calcSocialBuzz(co))).toBe(true);
+  });
+});
+
+// --- signal vector assembly -------------------------------------------------
+describe("buildSignals", () => {
+  const co = { seed: 3, trend: 0.003, events: [{ tag: "pos" }, { tag: "neg" }], prices: rising };
+  test("returns all 10 signal keys", () => {
+    const s = buildSignals(co, rising, 0.2);
+    expect(Object.keys(s).sort()).toEqual(
+      ["analyst", "buzz", "calmness", "cross", "momentum", "news", "rangePos", "sector", "streak", "trend"].sort()
+    );
+  });
+  test("passes sectorVal through verbatim", () => {
+    expect(buildSignals(co, rising, 0.42).sector).toBe(0.42);
+  });
+  test("wires each signal to its calc fn for the given window", () => {
+    const s = buildSignals(co, rising, 0);
+    expect(s.trend).toBe(calcTrend(rising));
+    expect(s.rangePos).toBe(calcRangePosition(rising));
+    expect(s.news).toBe(calcNews(co.events));
   });
 });
 

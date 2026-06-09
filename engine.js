@@ -143,6 +143,25 @@ function calcSocialBuzz(company) {
   return Math.max(-1, Math.min(1, momentumProxy + noise));
 }
 
+// Assemble the 10-signal vector for one company over a given price window.
+// `sectorVal` is passed in because the live view and the historical backtest
+// compute sector strength differently (current peers vs peers-at-day-d); every
+// other signal is identical, so this is the one place the vector is built.
+function buildSignals(company, win, sectorVal) {
+  return {
+    momentum: calcMomentum(win),
+    trend:    calcTrend(win),
+    news:     calcNews(company.events),
+    sector:   sectorVal,
+    rangePos: calcRangePosition(win),
+    streak:   calcStreak(win),
+    cross:    calcMACross(win),
+    analyst:  calcAnalystRating(company),
+    buzz:     calcSocialBuzz(company),
+    calmness: calcCalmness(win)
+  };
+}
+
 /* ---------- SCORING ---------- */
 
 const WEIGHTS = {
@@ -221,6 +240,7 @@ if (typeof module !== "undefined" && module.exports) {
     seededRandom,
     calcMomentum, calcTrend, calcCalmness, calcNews, calcSectorStrength,
     calcRangePosition, calcStreak, calcMACross, calcAnalystRating, calcSocialBuzz,
+    buildSignals,
     WEIGHTS, scorePredicia, scoreGrahamValue, scoreCarhartMomentum,
     verdictFromScore, confidenceFromScore
   };
