@@ -1050,7 +1050,12 @@
     font-family: inherit;
     box-sizing: border-box;
   }
-  .modal-input-group input:focus {
+  .modal-input-group input:focus-visible {
+    outline: none;
+    border-color: var(--brand);
+    box-shadow: 0 0 0 3px var(--brand-soft);
+  }
+  .modal-input-group input:focus:not(:focus-visible) {
     outline: none;
     border-color: var(--brand);
   }
@@ -1546,6 +1551,19 @@
   @media (max-width: 600px) {
     .hero h1 { font-size: 22px; }
     .price { font-size: 20px; }
+  }
+
+  /* Keyboard focus: visible ring on every interactive element (none existed before) */
+  a:focus-visible,
+  button:focus-visible,
+  input:focus-visible,
+  select:focus-visible,
+  textarea:focus-visible,
+  [tabindex]:focus-visible,
+  [role="button"]:focus-visible {
+    outline: 2px solid var(--brand);
+    outline-offset: 2px;
+    border-radius: var(--radius-sm);
   }
 </style>
 </head>
