@@ -1,32 +1,28 @@
-# Predicia — TODOs / Deferred Backlog
+# Predicia — TODOs / Backlog
 
-Everything from the QA pass and the design review has shipped except the polish
-items below. These are low-priority "good → great" refinements, not bugs — the
-app is live and correct at https://predicia.vercel.app.
+Everything from the QA pass and the design review has shipped. The polish
+backlog below is now cleared. App is live at https://predicia.vercel.app.
 
-## Remaining (polish)
+## Polish backlog — DONE
 
-- [ ] **Replace `transition: all` (3 uses)** with explicit property lists
-  (`transition: background .15s ease, transform .15s ease`). Animating `all`
-  also animates layout/paint properties and risks minor jank. (`index.html`)
+- [x] **Replace `transition: all` (3 uses)** with explicit non-layout property
+  lists (`background-color, border-color, color, transform, box-shadow`). — `af08c5f`
 
-- [ ] **Fold stray accent colors into the `:root` token system.** ~11 hardcoded
-  hex/`rgba()` accents live outside the CSS variables (the rest of the palette
-  is tokenised). Move them into `:root` so the color system stays single-source.
-  (`index.html`)
+- [x] **Fold stray accent colors into `:root` tokens** — `--accent-amber`,
+  `--model-predicia/-graham/-carhart`, `--border-strong`. All CSS usages now
+  reference vars (JS confetti palette stays literal). — `af08c5f`
 
-- [ ] **Finish the spacing-token migration.** `--space-*` tokens now exist and
-  fractional font-sizes are gone, but most `padding`/`margin`/`gap` values are
-  still literal px. Migrate them to `--space-*` for a fully systematic scale.
-  Deliberate refactor — high churn, do it in one focused pass. (`index.html`)
+- [x] **Tokenize on-scale spacing** — 43 single-value `padding/margin/gap`
+  declarations matching the scale (4/8/12/16/20/24/32px) now use `--space-*`
+  (lossless). The intentional 2px rhythm (6/10/14/18/22px) is left literal by
+  design so the token set stays clean. — `d4aed80`
 
-- [ ] **Broaden the responsive strategy (optional).** The concrete mobile bug
-  (backtest win-rate bar collapsing to 0px) is fixed and there's no horizontal
-  overflow at any breakpoint, but there's still only a single `max-width:600px`
-  query. A tablet breakpoint + modal/nav tuning would be a nice-to-have, not a
-  fix. (`index.html`)
+- [x] **Broader responsive** — verified, no change needed. Tested at
+  375/390/768/820/1280px: no overflow, fluid `auto-fit` grids reflow cleanly,
+  modal + detail view hold up. The single mobile breakpoint plus fluid grids
+  already cover the range; a tablet breakpoint would be gratuitous.
 
-## Done (for reference)
+## Done earlier (for reference)
 
 - QA: confidence cap at 94%, engine version unified to v3.1, 63-vs-66 count
   clarified, 429 rate-limit handling, currency consistency.
