@@ -28,6 +28,12 @@
     --space-5: 20px;
     --space-6: 24px;
     --space-8: 32px;
+    /* Accent + per-model colors (were hardcoded across several rules) */
+    --accent-amber: #ffc107;
+    --model-predicia: #5a87ff;
+    --model-graham: #ffc107;
+    --model-carhart: #ff6b35;
+    --border-strong: #d8dff0;
     --bg-start: #f6f8fc;
     --bg-end: #ffffff;
     --card: #ffffff;
@@ -316,7 +322,7 @@
     letter-spacing: 2px;
     margin: 6px 0;
   }
-  .stars .star.on  { color: #ffc107; text-shadow: 0 0 8px rgba(255, 193, 7, 0.6); }
+  .stars .star.on  { color: var(--accent-amber); text-shadow: 0 0 8px rgba(255, 193, 7, 0.6); }
   .stars .star.off { color: var(--bar-bg); }
   .buzz-trend {
     font-size: 26px;
@@ -547,7 +553,7 @@
   .card:hover {
     transform: translateY(-2px);
     box-shadow: 0 2px 4px rgba(20,30,60,0.05), 0 16px 36px rgba(20,30,60,0.1);
-    border-color: #d8dff0;
+    border-color: var(--border-strong);
   }
   .card.active {
     border-color: var(--brand);
@@ -822,7 +828,7 @@
     font-weight: 600;
     cursor: pointer;
     font-size: 13px;
-    transition: all .15s ease;
+    transition: background-color .15s ease, border-color .15s ease, color .15s ease, transform .15s ease, box-shadow .15s ease;
   }
   .btn-secondary:hover {
     border-color: var(--down);
@@ -944,7 +950,7 @@
     font-weight: 700;
     cursor: pointer;
     font-size: 13px;
-    transition: all .15s ease;
+    transition: background-color .15s ease, border-color .15s ease, color .15s ease, transform .15s ease, box-shadow .15s ease;
   }
   .btn-sell:hover {
     background: var(--down);
@@ -967,7 +973,7 @@
     align-items: center;
     gap: 10px;
     cursor: pointer;
-    transition: all .15s ease;
+    transition: background-color .15s ease, border-color .15s ease, color .15s ease, transform .15s ease, box-shadow .15s ease;
   }
   .buy-card:hover {
     border-color: var(--brand);
@@ -1184,9 +1190,9 @@
     border-radius: var(--radius-sm);
     padding: 12px 14px;
   }
-  .bt-model.predicia { border-left-color: #5a87ff; }
-  .bt-model.graham   { border-left-color: #ffc107; }
-  .bt-model.carhart  { border-left-color: #ff6b35; }
+  .bt-model.predicia { border-left-color: var(--model-predicia); }
+  .bt-model.graham   { border-left-color: var(--model-graham); }
+  .bt-model.carhart  { border-left-color: var(--model-carhart); }
   .bt-model-name {
     font-size: 11px;
     color: var(--text-3);
@@ -1298,9 +1304,9 @@
     padding: 16px 18px;
     position: relative;
   }
-  .model-card.model-predicia { border-left-color: #5a87ff; }
-  .model-card.model-graham   { border-left-color: #ffc107; }
-  .model-card.model-carhart  { border-left-color: #ff6b35; }
+  .model-card.model-predicia { border-left-color: var(--model-predicia); }
+  .model-card.model-graham   { border-left-color: var(--model-graham); }
+  .model-card.model-carhart  { border-left-color: var(--model-carhart); }
   .model-tag {
     display: inline-block;
     font-size: 10px;
@@ -1449,9 +1455,9 @@
   .advice-block.real b { color: var(--up); }
   .advice-block.warning {
     background: rgba(255, 193, 7, 0.08);
-    border-left-color: #ffc107;
+    border-left-color: var(--model-graham);
   }
-  .advice-block.warning b { color: #ffc107; }
+  .advice-block.warning b { color: var(--accent-amber); }
   .advice-numbers {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
@@ -1538,7 +1544,7 @@
   .live-pill.status-demo {
     background: rgba(255, 193, 7, 0.15);
     border-color: rgba(255, 193, 7, 0.55);
-    color: #ffc107;
+    color: var(--accent-amber);
   }
   .live-dot {
     width: 7px;
@@ -2598,6 +2604,12 @@ async function tryFinnhubBatch(symbols, apiKey, onProgress) {
   const ordered = sortByPriority(symbols);
   const BASE_THROTTLE_MS = 1050;
   const MAX_RETRIES = 3;
+  // Wall-clock cap on retries: under a sustained 429 storm, retrying every
+  // symbol 3x near the 8s backoff could otherwise wedge the fetch for ~20 min
+  // (holding refreshInFlight the whole time). Past the budget we stop retrying
+  // and let remaining symbols fall back to sample prices.
+  const RETRY_BUDGET_MS = 90000;
+  const deadline = Date.now() + RETRY_BUDGET_MS;
   let throttleMs = BASE_THROTTLE_MS;
   let retries = 0;
 
@@ -2621,7 +2633,7 @@ async function tryFinnhubBatch(symbols, apiKey, onProgress) {
 
     if (onProgress) onProgress(i + 1, ordered.length, sym, out[sym]);
 
-    if (rateLimited && retries < MAX_RETRIES) {
+    if (rateLimited && retries < MAX_RETRIES && Date.now() < deadline) {
       // Exponential backoff, capped at 8s, then retry the same symbol.
       retries++;
       throttleMs = Math.min(throttleMs * 2, 8000);
@@ -2629,9 +2641,10 @@ async function tryFinnhubBatch(symbols, apiKey, onProgress) {
       i--;
       continue;
     }
-    // Recovered (or gave up on this symbol) — reset and ease back to normal cadence.
     retries = 0;
-    throttleMs = Math.max(BASE_THROTTLE_MS, throttleMs / 2);
+    // Clean success → return to full speed. Gave up while still rate-limited →
+    // ease down gradually instead of snapping back and re-tripping the limit.
+    throttleMs = rateLimited ? Math.max(BASE_THROTTLE_MS, throttleMs / 2) : BASE_THROTTLE_MS;
 
     if (i < ordered.length - 1) {
       await new Promise(r => setTimeout(r, throttleMs));
