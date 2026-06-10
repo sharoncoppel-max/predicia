@@ -2599,8 +2599,9 @@ function sortByPriority(symbols) {
   });
 }
 
-async function tryFinnhubBatch(symbols, apiKey, onProgress) {
-  // Finnhub: 60 calls/min on free tier. Throttle to ~57/min (1050ms between).
+async function tryFinnhubBatch(symbols, onProgress) {
+  // Calls our own /api/quote serverless proxy (it holds the Finnhub key
+  // server-side). Finnhub free tier is 60 calls/min, so throttle ~57/min.
   // Serial requests with progress callback so UI can update as prices arrive.
   const out = {};
   const ordered = sortByPriority(symbols);
@@ -2619,7 +2620,7 @@ async function tryFinnhubBatch(symbols, apiKey, onProgress) {
     const sym = ordered[i];
     let rateLimited = false;
     try {
-      const url = `https://finnhub.io/api/v1/quote?symbol=${encodeURIComponent(sym)}&token=${apiKey}`;
+      const url = `/api/quote?symbol=${encodeURIComponent(sym)}`;
       const resp = await fetch(url);
       if (resp.status === 429) {
         // Rate limited (shared key). Back off and retry this symbol next loop
@@ -2655,12 +2656,8 @@ async function tryFinnhubBatch(symbols, apiKey, onProgress) {
   return out;
 }
 
-// Toby's Finnhub key — baked in so live prices work for everyone with zero
-// setup (private repo, single shared key by design — no per-user keys).
-const DEFAULT_FINNHUB_KEY = "d8k5t1pr01qjgd6rlp7gd8k5t1pr01qjgd6rlp80";
-function getApiKey() {
-  return DEFAULT_FINNHUB_KEY;
-}
+// The Finnhub API key is NOT in the client. It lives in the FINNHUB_KEY env
+// var on Vercel and is used only by the /api/quote serverless proxy above.
 
 // Finnhub uses native ticker format (BRK.A is fine, not BRK-A).
 // Free tier supports US stocks only — skip foreign listings.
@@ -2686,15 +2683,14 @@ async function refreshRealPrices() {
 
 async function _refreshRealPrices() {
   setLiveStatus("loading", "FETCHING…");
-  const apiKey = getApiKey();
   let merged = {}; // Keyed by COMPANY TICKER (not Yahoo symbol)
 
-  // PRIMARY: Finnhub with API key (reliable CORS, no proxy needed).
+  // PRIMARY: Finnhub via our /api/quote proxy (key stays server-side).
   // Progress callback updates the UI as each price comes in — so users see
   // popular tickers populate within seconds even though the full set takes ~1min.
-  if (apiKey) {
+  {
     const usSymbols = COMPANIES.map(c => finnhubSymbolFor(c.ticker)).filter(s => s);
-    const finnhubResult = await tryFinnhubBatch(usSymbols, apiKey, (done, total, sym, quote) => {
+    const finnhubResult = await tryFinnhubBatch(usSymbols, (done, total, sym, quote) => {
       // Update status pill
       setLiveStatus("loading", "FETCHING " + done + "/" + total + " prices");
       // Apply the quote we just got to the live data so the DOM can show it
