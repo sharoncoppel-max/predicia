@@ -1701,7 +1701,7 @@
     <div class="paper-hero">
       <div>
         <h1>📊 Paper Trading Mode</h1>
-        <p>Practice investing with $1,000 in <b>virtual cash</b>. Buy and sell any stock. Watch your portfolio grow (or shrink!) over time. No real money — just learning.</p>
+        <p>Everyone starts with <b>$1,000</b> in virtual cash and <b>resets fresh on the 1st of each month</b> — whoever's richest at month's end is crowned champion! Buy and sell any stock at live prices.</p>
       </div>
       <button class="btn-secondary" id="resetPortfolio">Reset Portfolio</button>
     </div>
@@ -3967,10 +3967,23 @@ function loadPortfolio() {
     const raw = localStorage.getItem(PT_STORAGE_KEY);
     if (raw) {
       const p = JSON.parse(raw);
-      if (typeof p.cash === "number" && typeof p.holdings === "object") return p;
+      if (typeof p.cash === "number" && typeof p.holdings === "object") {
+        if (!p.month) p.month = currentMonth(); // older saves: adopt this month (they'll reset at the next rollover)
+        return p;
+      }
     }
   } catch (e) {}
-  return { cash: PT_STARTING_CASH, holdings: {} };
+  return { cash: PT_STARTING_CASH, holdings: {}, month: currentMonth() };
+}
+
+// Monthly reset: everyone starts fresh at $1,000 on the 1st of each month, so
+// each month is a fair race that lines up with crowning a monthly champion.
+function ensureCurrentMonth() {
+  const m = currentMonth();
+  if (portfolio.month !== m) {
+    portfolio = { cash: PT_STARTING_CASH, holdings: {}, month: m };
+    savePortfolio();
+  }
 }
 
 function savePortfolio() {
@@ -4158,6 +4171,7 @@ function switchView(view) {
     dashEls.forEach(el => { if (el) el.style.display = "none"; });
     paperEl.style.display = "block";
     paperBtn.classList.add("active");
+    ensureCurrentMonth();
     renderPaperTrading();
     refreshLeaderboard();
     ensurePlayer(() => { pushScore().then(refreshLeaderboard); });
@@ -4588,7 +4602,7 @@ function spawnConfetti(x, y) {
 /* ---------- RESET ---------- */
 document.getElementById("resetPortfolio").addEventListener("click", () => {
   if (confirm("Reset your portfolio? You'll lose all your trades and start over with $1,000.")) {
-    portfolio = { cash: PT_STARTING_CASH, holdings: {} };
+    portfolio = { cash: PT_STARTING_CASH, holdings: {}, month: currentMonth() };
     savePortfolio();
     renderPaperTrading();
     pushScore().then(refreshLeaderboard);
