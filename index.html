@@ -1706,7 +1706,14 @@
       <button class="btn-secondary" id="resetPortfolio">Reset Portfolio</button>
     </div>
 
+    <div id="winnerBanner"></div>
+
     <div class="portfolio-summary" id="portfolioSummary"></div>
+
+    <div class="paper-section" id="leaderboardSection">
+      <h2>🏆 Top Investors <span id="leaderboardMonth" style="font-weight:400;color:var(--text-2);font-size:15px"></span></h2>
+      <div id="leaderboardList"><div class="holding-empty">Loading leaderboard…</div></div>
+    </div>
 
     <div class="paper-section">
       <h2>💼 My Stocks</h2>
@@ -4000,6 +4007,139 @@ function fmtShares(n) {
 }
 
 /* ---------- VIEW SWITCHING ---------- */
+/* ---------- LIVE LEADERBOARD (Supabase) ----------
+   Public, just-for-fun monthly board. No login: you pick a username (kept in
+   this browser) and your total portfolio value is posted to a shared database.
+   Anyone can be on it; without passwords a score can be faked — accepted trade.
+   The anon key is meant to be public (row-level security guards the table).
+   Usernames are HTML-escaped on render — names come from a shared DB anyone can
+   write to, so we never trust them as markup. */
+const SUPABASE_URL = "https://eejamqewfosbwkkhezho.supabase.co";
+const SUPABASE_ANON = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImVlamFtcWV3Zm9zYndra2hlemhvIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODExOTU4NzIsImV4cCI6MjA5Njc3MTg3Mn0.dIkB7ajf2Mnrufxb5uHzM1vOa9qBuZUzZ9OK8oAiw9E";
+const SUPA_HEADERS = { "apikey": SUPABASE_ANON, "Authorization": "Bearer " + SUPABASE_ANON, "Content-Type": "application/json" };
+
+function ymOffset(off) { const d = new Date(); d.setDate(1); d.setMonth(d.getMonth() + off); return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0"); }
+function currentMonth() { return ymOffset(0); }
+function lastMonth() { return ymOffset(-1); }
+function monthName(ym) { const p = ym.split("-"); return new Date(+p[0], +p[1] - 1, 1).toLocaleString(undefined, { month: "long" }); }
+function escapeHtml(s) { return String(s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c])); }
+
+// Player identity for this browser: { username, rows: { "YYYY-MM": rowId } }
+const PLAYER_KEY = "predicia-player-v1";
+let player = loadPlayer();
+function loadPlayer() { try { const p = JSON.parse(localStorage.getItem(PLAYER_KEY)); if (p && p.username) { p.rows = p.rows || {}; return p; } } catch (e) {} return null; }
+function savePlayer() { try { localStorage.setItem(PLAYER_KEY, JSON.stringify(player)); } catch (e) {} }
+
+// Keep names friendly: 3–16 chars, simple characters, block obvious slurs.
+const USERNAME_BLOCK = ["fuck", "shit", "bitch", "cunt", "nigg", "fagg", "rape", "slut", "whore", "pussy", "nazi", "hitler", "retard", "asshole"];
+function checkUsername(raw) {
+  const name = (raw || "").trim();
+  if (name.length < 3 || name.length > 16) return { ok: false, msg: "Use 3–16 characters." };
+  if (!/^[A-Za-z0-9 _-]+$/.test(name)) return { ok: false, msg: "Letters, numbers, spaces, - and _ only." };
+  const flat = name.toLowerCase().replace(/[\s_-]/g, "");
+  if (USERNAME_BLOCK.some(w => flat.includes(w))) return { ok: false, msg: "Please pick a friendlier name." };
+  return { ok: true, name };
+}
+
+// Post this browser's current total to the shared board (one row per month).
+async function pushScore() {
+  if (!player || !player.username) return;
+  const m = currentMonth();
+  const value = portfolioTotalValue();
+  try {
+    if (player.rows[m]) {
+      await fetch(SUPABASE_URL + "/rest/v1/players?id=eq." + player.rows[m], { method: "PATCH", headers: SUPA_HEADERS, body: JSON.stringify({ value: value, updated_at: new Date().toISOString() }) });
+    } else {
+      const r = await fetch(SUPABASE_URL + "/rest/v1/players", { method: "POST", headers: Object.assign({ "Prefer": "return=representation" }, SUPA_HEADERS), body: JSON.stringify({ username: player.username, value: value, month: m }) });
+      const rows = await r.json();
+      if (rows && rows[0]) { player.rows[m] = rows[0].id; savePlayer(); }
+    }
+  } catch (e) { /* offline — board just won't update this time */ }
+}
+
+async function fetchLeaderboard() {
+  try {
+    const r = await fetch(SUPABASE_URL + "/rest/v1/players?month=eq." + currentMonth() + "&order=value.desc&limit=100&select=id,username,value", { headers: SUPA_HEADERS });
+    return r.ok ? await r.json() : [];
+  } catch (e) { return []; }
+}
+async function fetchWinner() {
+  try {
+    const r = await fetch(SUPABASE_URL + "/rest/v1/players?month=eq." + lastMonth() + "&order=value.desc&limit=1&select=username,value", { headers: SUPA_HEADERS });
+    const rows = r.ok ? await r.json() : [];
+    return rows[0] || null;
+  } catch (e) { return null; }
+}
+
+// First time in, ask for a username, create the row, then continue.
+function ensurePlayer(after) {
+  if (player && player.username) { if (after) after(); return; }
+  document.getElementById("modalContent").innerHTML = `
+    <h3>🏆 Pick your investor name</h3>
+    <p class="modal-sub">This shows on the leaderboard for everyone — keep it friendly!</p>
+    <div class="modal-input-group">
+      <label>Username (3–16 characters)</label>
+      <input type="text" id="unameInput" maxlength="16" placeholder="e.g. StockStar" />
+    </div>
+    <div class="modal-error" id="unameError"></div>
+    <div class="modal-actions">
+      <button class="btn-confirm-buy" id="unameSave">Start playing ▶</button>
+    </div>`;
+  document.getElementById("modalBackdrop").style.display = "grid";
+  const input = document.getElementById("unameInput");
+  const err = document.getElementById("unameError");
+  input.focus();
+  async function save() {
+    const c = checkUsername(input.value);
+    if (!c.ok) { err.textContent = c.msg; return; }
+    player = { username: c.name, rows: {} };
+    savePlayer();
+    await pushScore();
+    closeModal();
+    if (after) after();
+  }
+  document.getElementById("unameSave").addEventListener("click", save);
+  input.addEventListener("keydown", e => { if (e.key === "Enter") save(); });
+}
+
+function renderWinnerBanner(winner) {
+  const el = document.getElementById("winnerBanner");
+  if (!el) return;
+  if (!winner) { el.innerHTML = ""; return; }
+  el.innerHTML = `
+    <div style="background:linear-gradient(90deg,var(--brand-soft),var(--card-soft));border:1px solid var(--border);border-radius:14px;padding:18px 20px;margin-bottom:16px;text-align:center">
+      <div style="font-size:12px;color:var(--text-2);letter-spacing:.05em;text-transform:uppercase">👑 ${monthName(lastMonth())}'s Champion</div>
+      <div style="font-size:30px;font-weight:800;margin:4px 0">${escapeHtml(String(winner.username).slice(0, 20))}</div>
+      <div style="color:var(--text-2)">finished with ${fmtMoney(winner.value)}</div>
+    </div>`;
+}
+
+function renderLeaderboard(rows) {
+  const monthEl = document.getElementById("leaderboardMonth");
+  if (monthEl) monthEl.textContent = "— " + monthName(currentMonth());
+  const el = document.getElementById("leaderboardList");
+  if (!el) return;
+  if (!rows.length) { el.innerHTML = `<div class="holding-empty">No investors yet this month — buy a stock to get on the board!</div>`; return; }
+  const myIds = player ? Object.values(player.rows || {}) : [];
+  el.innerHTML = rows.map((r, i) => {
+    const mine = myIds.includes(r.id);
+    const medal = i === 0 ? "🥇" : i === 1 ? "🥈" : i === 2 ? "🥉" : (i + 1) + ".";
+    const meStyle = mine ? ";background:var(--brand-soft);border-radius:8px;font-weight:700" : "";
+    return `<div style="display:flex;align-items:center;gap:12px;padding:8px 12px;border-bottom:1px solid var(--border)${meStyle}">
+      <span style="width:34px;text-align:center;color:var(--text-2)">${medal}</span>
+      <span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(String(r.username).slice(0, 20))}${mine ? " (you)" : ""}</span>
+      <span class="${r.value >= PT_STARTING_CASH ? "up" : "down"}" style="font-weight:700">${fmtMoney(r.value)}</span>
+    </div>`;
+  }).join("");
+}
+
+let leaderboardTimer = null;
+async function refreshLeaderboard() {
+  const results = await Promise.all([fetchLeaderboard(), fetchWinner()]);
+  renderLeaderboard(results[0]);
+  renderWinnerBanner(results[1]);
+}
+
 function switchView(view) {
   currentView = view;
   const dashEls = [
@@ -4019,6 +4159,10 @@ function switchView(view) {
     paperEl.style.display = "block";
     paperBtn.classList.add("active");
     renderPaperTrading();
+    refreshLeaderboard();
+    ensurePlayer(() => { pushScore().then(refreshLeaderboard); });
+    if (leaderboardTimer) clearInterval(leaderboardTimer);
+    leaderboardTimer = setInterval(refreshLeaderboard, 20000);
   } else {
     dashEls.forEach(el => {
       if (!el) return;
@@ -4031,6 +4175,7 @@ function switchView(view) {
     });
     paperEl.style.display = "none";
     paperBtn.classList.remove("active");
+    if (leaderboardTimer) { clearInterval(leaderboardTimer); leaderboardTimer = null; }
   }
 }
 
@@ -4349,6 +4494,7 @@ function buyShares(ticker, shares, price) {
   portfolio.holdings[ticker].shares += shares;
   portfolio.holdings[ticker].totalCost += cost;
   savePortfolio();
+  pushScore().then(refreshLeaderboard);
   return true;
 }
 
@@ -4362,6 +4508,7 @@ function sellShares(ticker, shares, price) {
   h.shares -= shares;
   if (h.shares < 0.0001) delete portfolio.holdings[ticker];
   savePortfolio();
+  pushScore().then(refreshLeaderboard);
   return true;
 }
 
@@ -4444,6 +4591,7 @@ document.getElementById("resetPortfolio").addEventListener("click", () => {
     portfolio = { cash: PT_STARTING_CASH, holdings: {} };
     savePortfolio();
     renderPaperTrading();
+    pushScore().then(refreshLeaderboard);
   }
 });
 
