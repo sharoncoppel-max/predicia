@@ -231,52 +231,6 @@ function confidenceFromScore(score, dampening) {
   return Math.min(0.94, c);
 }
 
-/* ---------- SEASON GAME MATH ("Beat the Market") ----------
-   Pure helpers the season game runs on. All deterministic: prices come from the
-   seeded history (company.prices), so the same season always plays the same. */
-
-// Seeded close price for a company at a day index, clamped to the valid range
-// (so advancing past the end or before the start can never read out of bounds).
-function priceAt(company, dayIndex) {
-  const p = company && company.prices;
-  if (!p || !p.length) return 0;
-  const i = Math.max(0, Math.min(dayIndex, p.length - 1));
-  return p[i];
-}
-
-// Total dollar value of holdings at a given day. holdings: { TICKER: { shares } }.
-function valueHoldingsAt(holdings, companies, dayIndex) {
-  let total = 0;
-  for (const ticker in holdings) {
-    const shares = (holdings[ticker] && holdings[ticker].shares) || 0;
-    if (!shares) continue;
-    const c = companies.find(co => co.ticker === ticker);
-    if (c) total += shares * priceAt(c, dayIndex);
-  }
-  return total;
-}
-
-// Value at `dayIndex` of an equal-weight "bought everything at startDay" basket.
-// This is the market benchmark the player races. Skips any company whose start
-// price is missing/zero so it can't divide by zero.
-function benchmarkValueAt(startCash, companies, startDay, dayIndex) {
-  const n = companies.length;
-  if (!n) return startCash;
-  const perCompany = startCash / n;
-  let total = 0;
-  for (const c of companies) {
-    const p0 = priceAt(c, startDay);
-    if (p0 > 0) total += perCompany * (priceAt(c, dayIndex) / p0);
-  }
-  return total;
-}
-
-// Percent gain/loss from a starting value. Guards a zero/negative start.
-function pctReturn(now, start) {
-  if (!start || start <= 0) return 0;
-  return ((now - start) / start) * 100;
-}
-
 /* ---------- EXPORTS ----------
    Browser: `module` is undefined, so this block is skipped and the
    functions above stay as globals. Tests: require('./engine.js') reads
@@ -288,7 +242,6 @@ if (typeof module !== "undefined" && module.exports) {
     calcRangePosition, calcStreak, calcMACross, calcAnalystRating, calcSocialBuzz,
     buildSignals,
     WEIGHTS, scorePredicia, scoreGrahamValue, scoreCarhartMomentum,
-    verdictFromScore, confidenceFromScore,
-    priceAt, valueHoldingsAt, benchmarkValueAt, pctReturn
+    verdictFromScore, confidenceFromScore
   };
 }
