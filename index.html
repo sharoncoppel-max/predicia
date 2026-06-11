@@ -1672,8 +1672,8 @@
   </section>
 
   <div class="disclaimer">
-    <span style="font-size:18px;line-height:1">📚</span>
-    <div><strong>School project disclaimer:</strong> Predicting the stock market is one of the hardest problems in the world — even experts get it wrong all the time. Predicia is a <b>learning tool</b> that shows HOW these systems try to work. Don't use it to invest real money!</div>
+    <span style="font-size:18px;line-height:1">⚠️</span>
+    <div><strong>These predictions might not always work.</strong> The stock market is genuinely hard to predict. Predicia is not financial advice — please don't invest real money based on it.</div>
   </div>
 
   <div class="section-head">
@@ -1753,7 +1753,7 @@
   </main>
 
   <footer>
-    Made by a 10-year-old for a school project. Companies and recent events are real, prices are sample data for learning. <b>Don't use this for real investing.</b>
+    These predictions might not always work — Predicia is not financial advice. <b>Please don't invest real money based on it.</b>
   </footer>
 
 </div>
@@ -3634,7 +3634,7 @@ function showDetail(idx) {
       That's ${p.verdict === "up" ? "above +10 → " : p.verdict === "down" ? "below -10 → " : "between -10 and +10 → "}<b>${v.text}</b>.
       <br><br>
       Predicia combined <b>10 different signals</b> for this prediction. ${p.agreeing} of ${p.meaningful} active signals pointed the same way as the final answer, which is why confidence is <b>${fmtConf(p.confidence)}%</b>.
-      Remember: stock prediction is one of the hardest problems in the world. This is a learning tool — not real investment advice!
+      Remember: these predictions might not always work — this is not financial advice.
     </div>
 
     ${(() => {
