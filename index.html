@@ -1689,6 +1689,8 @@
       🎯 <b>Smart filter active:</b> showing only companies predicted to go <b>UP within 3 months</b>, or with a <b>premium share price ($1,000+)</b>.
       <br><span class="filter-count">Showing <b id="shownCount">—</b> of <span id="totalCount">—</span> companies</span>
     </div>
+    <input type="search" id="cardSearch" placeholder="🔎 Search any company…" autocomplete="off"
+      style="flex:1;min-width:140px;padding:8px 12px;border:1px solid var(--border);border-radius:10px;background:var(--card);color:var(--text-1);font-size:14px" />
     <button class="filter-btn" id="filterToggle">Show all companies</button>
   </div>
 
@@ -1723,6 +1725,8 @@
     <div class="paper-section">
       <h2>🛒 Buy Stocks</h2>
       <p class="paper-sub">Click any company to buy shares. Prices match what Predicia is showing.</p>
+      <input type="search" id="buySearch" placeholder="🔎 Search any company…" autocomplete="off"
+        style="width:100%;max-width:320px;margin-bottom:12px;padding:8px 12px;border:1px solid var(--border);border-radius:10px;background:var(--card);color:var(--text-1);font-size:14px" />
       <div class="buy-grid" id="buyGrid"></div>
     </div>
   </section>
@@ -3356,9 +3360,13 @@ function fmtConf(c) {
 
 // FILTER STATE — defaults to "smart filter": short-term UPs + premium prices only
 let showAllCards = false;
+let searchTerm = "";
+let buySearchTerm = "";
 const PREMIUM_PRICE_THRESHOLD = 1000;
 
 function shouldShowCard(company, prediction) {
+  // A search overrides the smart filter — let people find ANY company by name/ticker.
+  if (searchTerm) return (company.name + " " + company.ticker).toLowerCase().includes(searchTerm);
   if (showAllCards) return true;
   // Show if predicted UP within 3 months (tomorrow, this week, this month)
   const shortTerm = prediction.timing.slice(0, 3);
@@ -3744,6 +3752,12 @@ document.getElementById("filterToggle").addEventListener("click", function () {
       info.innerHTML = '🎯 <b>Smart filter active:</b> showing only companies predicted to go <b>UP within 3 months</b>, or with a <b>premium share price ($1,000+)</b>.<br><span class="filter-count">Showing <b id="shownCount">—</b> of <span id="totalCount">—</span> companies</span>';
     }
   }
+  renderCards();
+});
+
+// Dashboard search — type a name or ticker to find any company.
+document.getElementById("cardSearch").addEventListener("input", function () {
+  searchTerm = this.value.toLowerCase().trim();
   renderCards();
 });
 
@@ -4271,7 +4285,13 @@ function renderPaperTrading() {
 
   // Buy grid — show ALL companies sorted by price descending so the wow-factor stocks lead
   const buyEl = document.getElementById("buyGrid");
-  const sorted = COMPANIES.slice().sort((a, b) => currentPriceOf(b.ticker) - currentPriceOf(a.ticker));
+  const sorted = COMPANIES
+    .filter(c => !buySearchTerm || (c.name + " " + c.ticker).toLowerCase().includes(buySearchTerm))
+    .sort((a, b) => currentPriceOf(b.ticker) - currentPriceOf(a.ticker));
+  if (!sorted.length) {
+    buyEl.innerHTML = `<div class="holding-empty">No company matches that search — try another name or ticker.</div>`;
+    return;
+  }
   buyEl.innerHTML = sorted.map(c => {
     const price = currentPriceOf(c.ticker);
     return `
@@ -4607,6 +4627,12 @@ document.getElementById("resetPortfolio").addEventListener("click", () => {
     renderPaperTrading();
     pushScore().then(refreshLeaderboard);
   }
+});
+
+// Buy-grid search — find any company by name or ticker.
+document.getElementById("buySearch").addEventListener("input", function () {
+  buySearchTerm = this.value.toLowerCase().trim();
+  renderPaperTrading();
 });
 
 // Live-update if user changes system theme (only if they haven't set a preference)
