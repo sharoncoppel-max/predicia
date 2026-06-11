@@ -15,6 +15,7 @@ const {
   buildSignals,
   WEIGHTS, scorePredicia, scoreGrahamValue, scoreCarhartMomentum,
   verdictFromScore, confidenceFromScore,
+  priceAt, valueHoldingsAt, benchmarkValueAt, pctReturn,
 } = engine;
 
 // --- fixtures ---------------------------------------------------------------
@@ -179,6 +180,49 @@ describe("verdictFromScore", () => {
   test("inside the band = neutral", () => expect(verdictFromScore(0.05)).toBe("neutral"));
   test("exactly +0.10 is neutral (boundary is exclusive)", () => expect(verdictFromScore(0.10)).toBe("neutral"));
   test("exactly -0.10 is neutral", () => expect(verdictFromScore(-0.10)).toBe("neutral"));
+});
+
+// --- season game math --------------------------------------------------------
+describe("season math", () => {
+  // A doubles by day 2, B stays flat.
+  const A = { ticker: "A", prices: [10, 10, 20] };
+  const B = { ticker: "B", prices: [10, 10, 10] };
+  const cos = [A, B];
+
+  describe("priceAt", () => {
+    test("returns the price at the index", () => expect(priceAt(A, 2)).toBe(20));
+    test("clamps above the range to the last price", () => expect(priceAt(A, 99)).toBe(20));
+    test("clamps below the range to the first price", () => expect(priceAt(A, -5)).toBe(10));
+    test("empty prices = 0", () => expect(priceAt({ ticker: "X", prices: [] }, 0)).toBe(0));
+  });
+
+  describe("valueHoldingsAt", () => {
+    test("no holdings = 0", () => expect(valueHoldingsAt({}, cos, 2)).toBe(0));
+    test("values one holding at the day price", () =>
+      expect(valueHoldingsAt({ A: { shares: 2 } }, cos, 2)).toBe(40)); // 2 * 20
+    test("sums multiple holdings", () =>
+      expect(valueHoldingsAt({ A: { shares: 1 }, B: { shares: 3 } }, cos, 2)).toBe(20 + 30));
+    test("ignores zero-share entries", () =>
+      expect(valueHoldingsAt({ A: { shares: 0 } }, cos, 2)).toBe(0));
+  });
+
+  describe("benchmarkValueAt", () => {
+    test("at startDay equals the starting cash", () =>
+      expect(benchmarkValueAt(100, cos, 0, 0)).toBeCloseTo(100, 9));
+    test("equal-weight: A doubles, B flat => +50%", () =>
+      expect(benchmarkValueAt(100, cos, 0, 2)).toBeCloseTo(150, 9)); // 50*2 + 50*1
+    test("skips a company with a zero start price (no divide-by-zero)", () => {
+      const C = { ticker: "C", prices: [0, 0, 5] };
+      expect(benchmarkValueAt(100, [A, C], 0, 2)).toBeCloseTo(100, 9); // only A counts: 50*2
+    });
+  });
+
+  describe("pctReturn", () => {
+    test("gain", () => expect(pctReturn(150, 100)).toBeCloseTo(50, 9));
+    test("loss", () => expect(pctReturn(50, 100)).toBeCloseTo(-50, 9));
+    test("flat", () => expect(pctReturn(100, 100)).toBe(0));
+    test("zero start is guarded", () => expect(pctReturn(100, 0)).toBe(0));
+  });
 });
 
 // --- confidence cap: regression for the QA fix ------------------------------
