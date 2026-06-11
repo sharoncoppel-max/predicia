@@ -1649,7 +1649,7 @@
     </div>
     <div class="header-actions">
       <div class="live-pill status-demo" id="livePill" title="Click to refresh live prices from Yahoo Finance"><span class="live-dot"></span><span id="liveStatus">DEMO</span></div>
-      <button class="theme-toggle paper-toggle" id="paperToggle" aria-label="Play: Beat the Market" title="Play: Beat the Market — turn $1,000 into more">
+      <button class="theme-toggle paper-toggle" id="paperToggle" aria-label="Paper Trading Mode" title="Paper Trading Mode — virtual portfolio">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
           <rect x="2" y="7" width="20" height="14" rx="2"></rect>
           <path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16"></path>
@@ -1703,14 +1703,10 @@
         <h1>📊 Paper Trading Mode</h1>
         <p>Practice investing with $1,000 in <b>virtual cash</b>. Buy and sell any stock. Watch your portfolio grow (or shrink!) over time. No real money — just learning.</p>
       </div>
-      <button class="btn-secondary" id="resetPortfolio">🔄 New season</button>
+      <button class="btn-secondary" id="resetPortfolio">Reset Portfolio</button>
     </div>
 
-    <div id="seasonBar"></div>
-
     <div class="portfolio-summary" id="portfolioSummary"></div>
-
-    <div id="seasonRecap" style="display:none"></div>
 
     <div class="paper-section">
       <h2>💼 My Stocks</h2>
@@ -3974,66 +3970,15 @@ function savePortfolio() {
   try { localStorage.setItem(PT_STORAGE_KEY, JSON.stringify(portfolio)); } catch (e) {}
 }
 
-/* ---------- SEASON — "Beat the Market" game (step 1: state + pricing) ----------
-   The season turns paper trading into a game: start with $1,000 and step through
-   the seeded price history (COMPANIES[i].prices) one week at a time, racing an
-   equal-weight "market" benchmark. Prices come from prices[dayIndex] — NOT live
-   data — so the game is deterministic and works fully offline (no /api/quote).
-
-   Window: skip the first SEASON_START_DAY days (signal warm-up, matches the
-   backtest), then SEASON_STEPS weekly steps of SEASON_STEP_DAYS each:
-       day  30 ───step 7──▶ 37 ──▶ ... ──▶ 86   (8 steps, well inside the 180-day data)
-   `active:false` by default, so until a season is started the app behaves exactly
-   as before. Stored under its own key so the old paper-trading save can't collide. */
-const SEASON_STORAGE_KEY = "predicia-season-v1";
-const SEASON_START_DAY = 30;
-const SEASON_STEP_DAYS = 7;
-const SEASON_STEPS = 8;
-
-let season = loadSeason();
-
-function loadSeason() {
-  try {
-    const raw = localStorage.getItem(SEASON_STORAGE_KEY);
-    if (raw) {
-      const s = JSON.parse(raw);
-      if (typeof s.active === "boolean" && typeof s.dayIndex === "number") return s;
-    }
-  } catch (e) {}
-  return { active: false, startDay: SEASON_START_DAY, dayIndex: SEASON_START_DAY,
-           endDay: SEASON_START_DAY + SEASON_STEP_DAYS * SEASON_STEPS, done: false };
-}
-
-function saveSeason() {
-  try { localStorage.setItem(SEASON_STORAGE_KEY, JSON.stringify(season)); } catch (e) {}
-}
-
-// Begin a fresh season: rewind to day 1 and reset the wallet to $1,000.
-// (Not wired to any button yet — that's a later step. Clamps the window to the
-// shortest available price history so it can never index out of bounds.)
-function startSeason() {
-  const minLen = COMPANIES.reduce((m, c) => Math.min(m, c.prices.length), Infinity);
-  const startDay = Math.min(SEASON_START_DAY, Math.max(0, minLen - 2));
-  const endDay = Math.min(startDay + SEASON_STEP_DAYS * SEASON_STEPS, minLen - 1);
-  season = { active: true, startDay, dayIndex: startDay, endDay, done: false };
-  portfolio = { cash: PT_STARTING_CASH, holdings: {} };
-  saveSeason();
-  savePortfolio();
-}
-
 function currentPriceOf(ticker) {
+  // Prefer live price (updates every 5s); fall back to historical close
+  if (livePrices && livePrices[ticker] !== undefined) return livePrices[ticker];
   const c = COMPANIES.find(co => co.ticker === ticker);
   if (!c) return 0;
-  // In a season, the price is the seeded close at the current day — deterministic,
-  // no live data. Otherwise prefer the live price (updates every 5s), then last close.
-  if (season.active) return priceAt(c, season.dayIndex);
-  if (livePrices && livePrices[ticker] !== undefined) return livePrices[ticker];
   return c.prices[c.prices.length - 1];
 }
 
 function portfolioHoldingsValue() {
-  // In a season, delegate to the engine's deterministic valuation (single source).
-  if (season.active) return valueHoldingsAt(portfolio.holdings, COMPANIES, season.dayIndex);
   let v = 0;
   for (const ticker in portfolio.holdings) {
     v += portfolio.holdings[ticker].shares * currentPriceOf(ticker);
@@ -4054,137 +3999,6 @@ function fmtShares(n) {
   return n.toFixed(4);
 }
 
-/* ---------- SEASON UI — "Beat the Market" game ----------
-   Renders the game HUD (week X/Y, you vs market), the "Next week" advance, a
-   teaching tip, and the end-of-season recap. All values come from the engine's
-   pure season math; prices are the seeded history via currentPriceOf. */
-function seasonTotalSteps() {
-  return Math.max(1, Math.round((season.endDay - season.startDay) / SEASON_STEP_DAYS));
-}
-function seasonCurrentStep() {
-  return Math.round((season.dayIndex - season.startDay) / SEASON_STEP_DAYS);
-}
-
-// A short, always-relevant teaching line based on how spread out the player is.
-function seasonTip() {
-  const n = Object.keys(portfolio.holdings).length;
-  if (n === 0) return `💡 Buy a few companies below to start. Spreading your $1,000 across several lowers your risk.`;
-  if (n <= 2) return `💡 You're in ${n} compan${n === 1 ? "y" : "ies"}. Pros spread across many — if one drops, the others cushion it.`;
-  return `💡 Nicely spread across ${n} companies. Hit "Next week" to see how your picks do.`;
-}
-
-function renderSeasonBar() {
-  const bar = document.getElementById("seasonBar");
-  const recap = document.getElementById("seasonRecap");
-  if (!bar) return;
-  const heroH1 = document.querySelector("#paperTradingView .paper-hero h1");
-  if (heroH1) heroH1.textContent = season.active ? "🏆 Beat the Market" : "📊 Paper Trading Mode";
-
-  if (!season.active) { bar.innerHTML = ""; if (recap) recap.style.display = "none"; return; }
-
-  const total = seasonTotalSteps();
-  const step = Math.min(seasonCurrentStep(), total);
-  const you = portfolioTotalValue();
-  const market = benchmarkValueAt(PT_STARTING_CASH, COMPANIES, season.startDay, season.dayIndex);
-  const youR = pctReturn(you, PT_STARTING_CASH);
-  const mktR = pctReturn(market, PT_STARTING_CASH);
-  const ahead = youR - mktR;
-  const willFinish = season.dayIndex + SEASON_STEP_DAYS >= season.endDay;
-
-  const fmtPctR = r => (r >= 0 ? "+" : "") + r.toFixed(1) + "%";
-  const clsOf = r => (r > 0 ? "up" : r < 0 ? "down" : "");
-
-  bar.innerHTML = `
-    <div class="season-bar" style="background:var(--card-soft);border:1px solid var(--border);border-radius:12px;padding:14px 16px;margin-bottom:16px;display:flex;flex-direction:column;gap:10px">
-      <div style="display:flex;flex-wrap:wrap;align-items:center;gap:10px;justify-content:space-between">
-        <b>🏆 Week ${step} of ${total}</b>
-        <span class="${ahead >= 0 ? "up" : "down"}" style="font-weight:700">
-          ${ahead >= 0 ? "▲ beating the market by " : "▼ behind the market by "}${Math.abs(ahead).toFixed(1)}%
-        </span>
-      </div>
-      <div style="display:flex;flex-wrap:wrap;align-items:center;gap:16px">
-        <div><span class="ps-label">You</span> <b class="${clsOf(youR)}">${fmtPctR(youR)}</b> · ${fmtMoney(you)}</div>
-        <div><span class="ps-label">Market</span> <b class="${clsOf(mktR)}">${fmtPctR(mktR)}</b></div>
-        <div style="margin-left:auto">
-          ${season.done
-            ? `<span class="ps-label">Season over — see results below</span>`
-            : `<button class="btn-confirm-buy" id="seasonAdvance">${willFinish ? "🏁 Finish &amp; see results" : "Next week ▶"}</button>`}
-        </div>
-      </div>
-      <div style="font-size:13px;color:var(--text-2)">${seasonTip()}</div>
-    </div>`;
-
-  const advBtn = document.getElementById("seasonAdvance");
-  if (advBtn) advBtn.addEventListener("click", advanceSeason);
-
-  if (season.done) renderRecap(you, market, youR, mktR);
-  else if (recap) recap.style.display = "none";
-}
-
-// Step the season forward one week (clamped); finishing triggers the recap.
-function advanceSeason() {
-  if (!season.active || season.done) return;
-  season.dayIndex = Math.min(season.dayIndex + SEASON_STEP_DAYS, season.endDay);
-  if (season.dayIndex >= season.endDay) season.done = true;
-  saveSeason();
-  renderPaperTrading();
-  if (season.done) {
-    const r = document.getElementById("seasonRecap");
-    if (r) r.scrollIntoView({ behavior: "smooth", block: "start" });
-  }
-}
-
-function renderRecap(you, market, youR, mktR) {
-  const recap = document.getElementById("seasonRecap");
-  if (!recap) return;
-  const ahead = youR - mktR;
-  const tied = Math.abs(ahead) < 0.05;
-  const beat = ahead >= 0.05;
-  const verdict = beat ? "🏆 You beat the market!" : tied ? "🤝 You matched the market." : "📉 The market won this time.";
-
-  const nHold = Object.keys(portfolio.holdings).length;
-  const lessons = [];
-  if (beat) lessons.push("Even the pros are only right about 76% of the time, so beating the market is genuinely hard. Nice.");
-  else lessons.push("The market is hard to beat — that's exactly what the pros learn too. Splitting evenly across everything is a strong baseline.");
-  if (nHold > 0 && nHold <= 2) lessons.push(`You put your money in just ${nHold} compan${nHold === 1 ? "y" : "ies"}. Spreading across more lowers your risk — that's diversification.`);
-  else if (nHold >= 6) lessons.push("You spread across lots of companies — the safer, steadier approach.");
-  if (portfolio.cash > PT_STARTING_CASH * 0.5) lessons.push("You kept over half your money as cash. Safe, but cash doesn't grow — investing more puts it to work.");
-
-  const youRstr = (youR >= 0 ? "+" : "") + youR.toFixed(1) + "%";
-  const mktRstr = (mktR >= 0 ? "+" : "") + mktR.toFixed(1) + "%";
-  const share = `I turned $1,000 into ${fmtMoney(you)} (${youRstr}) playing Predicia — the market did ${mktRstr}. Can you beat me? predicia.vercel.app`;
-
-  recap.innerHTML = `
-    <div class="season-recap" style="background:var(--card-soft);border:1px solid var(--border);border-radius:14px;padding:20px;margin:16px 0">
-      <h2 style="margin:0 0 12px">${verdict}</h2>
-      <div style="display:flex;flex-wrap:wrap;gap:24px;margin-bottom:12px">
-        <div><div class="ps-label">Your money</div><div class="ps-value big ${youR >= 0 ? "up" : "down"}">${fmtMoney(you)}</div><div class="ps-sub ${youR >= 0 ? "up" : "down"}">${youRstr}</div></div>
-        <div><div class="ps-label">The market</div><div class="ps-value big">${fmtMoney(market)}</div><div class="ps-sub">${mktRstr}</div></div>
-      </div>
-      <ul style="margin:0 0 14px;padding-left:20px;line-height:1.7;color:var(--text-1)">
-        ${lessons.map(l => `<li>${l}</li>`).join("")}
-      </ul>
-      <div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:10px">
-        <button class="btn-confirm-buy" id="seasonPlayAgain">🔄 Play again</button>
-        <button class="btn-secondary" id="seasonShare">📋 Copy result</button>
-      </div>
-      <div id="seasonShareText" style="font-size:13px;color:var(--text-2);background:var(--card);border:1px dashed var(--border);border-radius:8px;padding:10px">${share}</div>
-    </div>`;
-  recap.style.display = "block";
-
-  const again = document.getElementById("seasonPlayAgain");
-  if (again) again.addEventListener("click", () => {
-    startSeason();
-    renderPaperTrading();
-    window.scrollTo({ top: 0, behavior: "smooth" });
-  });
-  const shareBtn = document.getElementById("seasonShare");
-  if (shareBtn) shareBtn.addEventListener("click", () => {
-    try { navigator.clipboard.writeText(share); shareBtn.textContent = "✅ Copied!"; }
-    catch (e) { shareBtn.textContent = "Select the text below ⬇"; }
-  });
-}
-
 /* ---------- VIEW SWITCHING ---------- */
 function switchView(view) {
   currentView = view;
@@ -4201,8 +4015,6 @@ function switchView(view) {
   const paperBtn = document.getElementById("paperToggle");
 
   if (view === "paper") {
-    // Entering the game starts a season if there isn't one running (or finished).
-    if (!season.active && !season.done) startSeason();
     dashEls.forEach(el => { if (el) el.style.display = "none"; });
     paperEl.style.display = "block";
     paperBtn.classList.add("active");
@@ -4228,7 +4040,6 @@ document.getElementById("paperToggle").addEventListener("click", () => {
 
 /* ---------- PAPER TRADING RENDERING ---------- */
 function renderPaperTrading() {
-  renderSeasonBar();
   // Summary
   const cash = portfolio.cash;
   const held = portfolioHoldingsValue();
@@ -4629,10 +4440,10 @@ function spawnConfetti(x, y) {
 
 /* ---------- RESET ---------- */
 document.getElementById("resetPortfolio").addEventListener("click", () => {
-  if (confirm("Start a new season? You'll go back to week 1 with a fresh $1,000.")) {
-    startSeason();
+  if (confirm("Reset your portfolio? You'll lose all your trades and start over with $1,000.")) {
+    portfolio = { cash: PT_STARTING_CASH, holdings: {} };
+    savePortfolio();
     renderPaperTrading();
-    window.scrollTo({ top: 0, behavior: "smooth" });
   }
 });
 
