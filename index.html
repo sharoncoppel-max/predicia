@@ -4320,6 +4320,45 @@ async function refreshExternalHoldings() {
    practice only as a fallback. Also nudges the daily refresh along (8/min cap). */
 const HIST_REFRESH_URL = "/api/refresh-histories";
 
+// Average daily drift over the last ~30 real closes. company.trend was the
+// synthetic generator's drift, reused by the simulated analyst & buzz signals;
+// once real prices replace the synthetic ones, trend must follow reality too,
+// or those two signals stay frozen at the old (usually bullish) value and fight
+// the real price action — dragging confidence toward zero.
+function realDriftOf(prices) {
+  const w = prices.slice(-30);
+  if (w.length < 2 || !(w[0] > 0)) return 0;
+  return (w[w.length - 1] / w[0] - 1) / (w.length - 1);
+}
+
+// Honest "news" derived from REAL price moves (we have no real news feed, and
+// fake headlines next to a real prediction would be misleading). Feeds the news
+// signal via calcNews (pos:+1, neg:-1, mixed:0) AND the detail-page events list.
+function realEventsFor(prices) {
+  const w = prices.slice(-22); // ~one month of trading days
+  if (w.length < 6) return [];
+  const last = w[w.length - 1];
+  const ev = [];
+  const monthRet = (last - w[0]) / w[0];
+  ev.push(monthRet >= 0
+    ? { text: "Up " + (monthRet * 100).toFixed(1) + "% over the past month", tag: "pos" }
+    : { text: "Down " + (Math.abs(monthRet) * 100).toFixed(1) + "% over the past month", tag: "neg" });
+  const wk = (last - w[w.length - 6]) / w[w.length - 6];
+  ev.push(Math.abs(wk) < 0.005
+    ? { text: "Roughly flat over the past week", tag: "mixed" }
+    : wk > 0 ? { text: "Up " + (wk * 100).toFixed(1) + "% in the past week", tag: "pos" }
+             : { text: "Down " + (Math.abs(wk) * 100).toFixed(1) + "% in the past week", tag: "neg" });
+  let best = -Infinity, worst = Infinity;
+  for (let i = 1; i < w.length; i++) {
+    const r = (w[i] - w[i - 1]) / w[i - 1];
+    if (r > best) best = r;
+    if (r < worst) worst = r;
+  }
+  if (best >= 0.02)  ev.push({ text: "Best day jumped +" + (best * 100).toFixed(1) + "%", tag: "pos" });
+  if (worst <= -0.02) ev.push({ text: "Worst day dropped " + (worst * 100).toFixed(1) + "%", tag: "neg" });
+  return ev;
+}
+
 async function applyRealHistories() {
   try {
     const r = await fetch(SUPABASE_URL + "/rest/v1/histories?select=ticker,prices", { headers: SUPA_HEADERS });
@@ -4332,6 +4371,10 @@ async function applyRealHistories() {
         c.prices = row.prices.map(Number);
         c.realData = true;
         if (livePrices[c.ticker] !== undefined) c.prices[c.prices.length - 1] = livePrices[c.ticker];
+        // Re-derive the simulated signals from the real prices so a "real"
+        // prediction isn't part-fake: trend drives analyst+buzz, events drive news.
+        c.trend = realDriftOf(c.prices);
+        c.events = realEventsFor(c.prices);
         applied++;
       }
     });
