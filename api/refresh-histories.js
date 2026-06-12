@@ -45,11 +45,16 @@ module.exports = async (req, res) => {
       }
     }
     if (upserts.length) {
-      await fetch(SUPABASE_URL + "/rest/v1/histories?on_conflict=ticker", {
+      const w = await fetch(SUPABASE_URL + "/rest/v1/histories?on_conflict=ticker", {
         method: "POST",
         headers: Object.assign({ "Prefer": "resolution=merge-duplicates" }, SUPA),
         body: JSON.stringify(upserts)
       });
+      if (!w.ok) {
+        const detail = await w.text();
+        res.status(500).json({ error: "cache write failed", fetched: upserts.length, detail: detail.slice(0, 160) });
+        return;
+      }
     }
     res.status(200).json({ refreshed: upserts.length, requested: symbols.length });
   } catch (e) {
