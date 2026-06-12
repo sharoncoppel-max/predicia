@@ -1760,8 +1760,8 @@
       <li><b>Social buzz</b> (5%) — Are people searching for and talking about this company online?</li>
       <li><b>Calmness</b> (5%) — How bumpy is the stock? Smoother stocks get more confident predictions.</li>
     </ol>
-    <div class="formula">Predicia Score = Σ (weight × signal)<br>verdict = UP if score > 0.1, DOWN if score < -0.1, MIXED otherwise<br>confidence boosted when many signals agree (up to 94%)</div>
-    <p style="margin-top:12px">More signals + more agreement = higher confidence. If 9 out of 10 signals all point the same way, Predicia is much surer. If signals fight each other, confidence drops. <b>Predicia never says more than 94% sure</b> — because the stock market is genuinely unpredictable.</p>
+    <div class="formula">Predicia Score = Σ (weight × signal)<br>verdict = UP if score > 0.1, DOWN if score < -0.1, MIXED otherwise<br>signal strength rises when many signals agree (up to 94%)</div>
+    <p style="margin-top:12px">More signals + more agreement = a stronger signal. If 9 out of 10 signals all point the same way, the signal is strong; if they fight each other, it's weak. <b>But "signal strength" is NOT the chance of being right.</b> We tested every prediction against 6 months of real prices (see the 🎯 Track Record on the home page): the models guess the direction right only about half the time — roughly a coin flip. That's not a flaw in Predicia; short-term stock moves are genuinely close to unpredictable. The real lesson: don't bet big on one stock — spread out and invest for the long run. 🍀</p>
   </section>
   </main>
 
@@ -3260,7 +3260,17 @@ function calcSectorStrengthAt(company, allCompanies, day) {
 
 function signalsAt(company, day) {
   const win = company.prices.slice(day - 30, day);
-  return buildSignals(company, win, calcSectorStrengthAt(company, COMPANIES, day));
+  const s = buildSignals(company, win, calcSectorStrengthAt(company, COMPANIES, day));
+  // POINT-IN-TIME (no lookahead): the soft signals must use only data available
+  // ON `day`, exactly like the live prediction derives them from today's window.
+  // Using the live company.trend/events here would leak the future into the past
+  // and fake a better track record. (realDriftOf/realEventsFor are hoisted below.)
+  const histWin = company.prices.slice(0, day);
+  const asOf = { trend: realDriftOf(histWin), seed: company.seed };
+  s.analyst = calcAnalystRating(asOf);
+  s.buzz = calcSocialBuzz(asOf);
+  s.news = calcNews(realEventsFor(histWin));
+  return s;
 }
 
 // scorePredicia lives in engine.js (loaded above).
@@ -3315,13 +3325,14 @@ function backtestCompany(company, options = {}) {
 }
 
 // Aggregate backtest across all companies
-function backtestAll() {
+function backtestAll(list) {
+  const companies = list || COMPANIES;
   const agg = {
     predicia: { hits: 0, total: 0, pnl: 0 },
     graham:   { hits: 0, total: 0, pnl: 0 },
     carhart:  { hits: 0, total: 0, pnl: 0 }
   };
-  for (const c of COMPANIES) {
+  for (const c of companies) {
     const r = backtestCompany(c);
     for (const k in r.stats) {
       agg[k].hits  += r.stats[k].hits;
@@ -3413,7 +3424,7 @@ function renderCards() {
       ${sparkline(c.prices.slice(-30), 240, 44, p.verdict)}
       <div class="predict-row">
         <div class="verdict ${p.verdict}">${v.icon} ${v.text}</div>
-        <div class="conf">Confidence <b>${fmtConf(p.confidence)}%</b></div>
+        <div class="conf">Signal strength <b>${fmtConf(p.confidence)}%</b></div>
       </div>
       <div class="model-mini" title="Three-model comparison (Ensemble · Value · Momentum)">
         ${Object.entries(p.models).map(([key, m]) => {
@@ -3454,14 +3465,14 @@ function showDetail(idx) {
         <h2>${c.emoji} ${c.name}${c.isPrivate ? '<span class="private-badge">PRIVATE</span>' : ''} <span style="color:var(--text-3);font-size:14px;font-weight:600">${c.ticker}</span></h2>
         <div class="sub">Current price <b style="color:var(--text-1)">${fmtPrice(last)}</b> · 30-day change <b style="color:${totalChange >= 0 ? 'var(--up)' : 'var(--down)'}">${fmtPct(totalChange)}</b></div>
       </div>
-      <div class="verdict-pill ${p.verdict}">${v.icon} ${v.text} — ${fmtConf(p.confidence)}% sure</div>
+      <div class="verdict-pill ${p.verdict}">${v.icon} ${v.text} · ${fmtConf(p.confidence)}% signal strength</div>
     </div>
 
     ${bigChart(c.prices.slice(-30), p.verdict)}
 
     <div class="models-section">
       <h3>📐 Three-Model Comparison</h3>
-      <p class="sub">Predicia runs three independent forecasting models with different methodologies. When they all agree, conviction is highest. When they disagree, the prediction is genuinely uncertain.</p>
+      <p class="sub">Predicia runs three independent forecasting models with different methodologies. The % on each is its <b>signal strength</b> — how strongly that model's indicators line up, not the odds of being right (the track record below shows how often they actually are). When all three agree, the signal is strongest; when they disagree, the stock is genuinely a toss-up.</p>
       <div class="models-grid">
         ${Object.entries(p.models).map(([key, m]) => {
           const v = verdictText(m.verdict);
@@ -3496,7 +3507,8 @@ function showDetail(idx) {
         const labels = { predicia: "Predicia Multi-Factor", graham: "Graham Value", carhart: "Carhart Momentum" };
         return `
         <div class="stock-backtest">
-          <h3>📊 6-month backtest for ${c.name}</h3>
+          <h3>🎯 Track record for ${c.name} — how often was it actually right?</h3>
+          <div style="font-size:12px;color:var(--text-2);margin-bottom:8px">Replaying the last 6 months of ${c.realData ? "<b>real</b> prices" : "practice prices"}: predict using only what was known that day, then check 30 days later.</div>
           ${Object.entries(bt.stats).map(([key, r]) => {
             const wr = r.winRate * 100;
             const wrColor = wr >= 55 ? "var(--up)" : wr < 45 ? "var(--down)" : "var(--text-2)";
@@ -3511,7 +3523,7 @@ function showDetail(idx) {
             `;
           }).join("")}
           <div style="font-size:11px;color:var(--text-3);margin-top:8px;font-style:italic">
-            ${bt.stats.predicia.total + bt.stats.graham.total + bt.stats.carhart.total} total predictions across the 6-month window for ${c.name}.
+            Across ${bt.stats.predicia.total + bt.stats.graham.total + bt.stats.carhart.total} predictions. Near 50% means it was about a coin flip — which is normal. The signal strength above shows how strongly the indicators agree, not the odds of being right. 🍀
           </div>
         </div>
       `;
@@ -3543,7 +3555,7 @@ function showDetail(idx) {
           <div class="t-verdict ${t.verdict}">
             ${t.verdict === "up" ? "▲ UP" : t.verdict === "down" ? "▼ DOWN" : "● MIXED"}
           </div>
-          <div class="t-conf">${fmtConf(t.confidence)}% sure</div>
+          <div class="t-conf">${fmtConf(t.confidence)}% signal</div>
         </div>
       `).join("")}
     </div>
@@ -3635,7 +3647,7 @@ function showDetail(idx) {
           <div class="agreement-pct" style="color:${p.agreement > 0.7 ? 'var(--up)' : p.agreement < 0.4 ? 'var(--down)' : 'var(--text-2)'}">${Math.round(p.agreement * 100)}%</div>
         </div>
         <div class="extra-main">${p.agreeing} of ${p.meaningful} signals agree</div>
-        <div class="extra-sub">More agreement = higher confidence</div>
+        <div class="extra-sub">More agreement = stronger signal (not better odds)</div>
       </div>
     </div>
 
@@ -3653,7 +3665,7 @@ function showDetail(idx) {
       <b>Final Predicia Score:</b> ${(p.score * 100).toFixed(1)} out of 100.
       That's ${p.verdict === "up" ? "above +10 → " : p.verdict === "down" ? "below -10 → " : "between -10 and +10 → "}<b>${v.text}</b>.
       <br><br>
-      Predicia combined <b>10 different signals</b> for this prediction. ${p.agreeing} of ${p.meaningful} active signals pointed the same way as the final answer, which is why confidence is <b>${fmtConf(p.confidence)}%</b>.
+      Predicia combined <b>10 different signals</b> for this prediction. ${p.agreeing} of ${p.meaningful} active signals pointed the same way as the final answer, which is why the <b>signal strength is ${fmtConf(p.confidence)}%</b> — that's how strongly the indicators agree, <b>not</b> the chance it's right (check the track record above 👆).
       Remember: these predictions don't always work — so choose wisely, and good luck! 🍀
     </div>
 
@@ -3696,7 +3708,9 @@ function showDetail(idx) {
 function renderBacktestSummary() {
   const el = document.getElementById("backtestSummary");
   if (!el) return;
-  const agg = backtestAll();
+  const realCos = COMPANIES.filter(c => c.realData);
+  const usingReal = realCos.length >= 10;        // enough real history to be meaningful
+  const agg = backtestAll(usingReal ? realCos : COMPANIES);
   const fmtRate = r => (r.winRate * 100).toFixed(1) + "%";
   const fmtPnl = p => (p >= 0 ? "+" : "") + (p * 100).toFixed(2) + "% / trade";
   const wrClass = r => r.winRate >= 0.55 ? "good" : r.winRate < 0.45 ? "poor" : "";
@@ -3706,10 +3720,14 @@ function renderBacktestSummary() {
     { key: "graham",   name: "Graham Value",          cls: "graham" },
     { key: "carhart",  name: "Carhart Momentum",      cls: "carhart" }
   ];
+  const best = Math.max(agg.predicia.winRate, agg.graham.winRate, agg.carhart.winRate) * 100;
+  const verdictLine = best >= 53
+    ? `The best model guessed right ${best.toFixed(0)}% of the time — a tiny edge, but barely better than flipping a coin.`
+    : `Every model landed near 50% — about the same as flipping a coin. That's the honest truth about short-term stock prediction: <b>almost nobody can do it reliably.</b>`;
   el.innerHTML = `
     <div class="bt-head">
-      <h3>📈 Backtest — last 6 months across all ${COMPANIES.length} companies</h3>
-      <div class="sub">30-day forward predictions, walked through history</div>
+      <h3>🎯 Track Record — were these predictions actually right?</h3>
+      <div class="sub">We replayed the last 6 months of ${usingReal ? "<b>real</b> prices" : "prices"} across ${usingReal ? realCos.length : COMPANIES.length} companies, made the prediction using only what was known on each day, then checked what really happened 30 days later.</div>
     </div>
     <div class="bt-grid">
       ${models.map(m => {
@@ -3719,17 +3737,20 @@ function renderBacktestSummary() {
             <div class="bt-model-name">${m.name}</div>
             <div class="bt-winrate ${wrClass(r)}">${fmtRate(r)}</div>
             <div class="bt-detail">
-              ${r.hits} of ${r.total} predictions correct
+              got the direction right ${r.hits} of ${r.total} times
             </div>
             <div class="bt-detail">
-              Avg P&amp;L: <span class="bt-pnl ${pnlClass(r.avgPnl)}">${fmtPnl(r.avgPnl)}</span>
+              Avg result: <span class="bt-pnl ${pnlClass(r.avgPnl)}">${fmtPnl(r.avgPnl)}</span>
             </div>
           </div>
         `;
       }).join("")}
     </div>
+    <div class="bt-caveat" style="border-left:3px solid var(--brand);background:var(--brand-soft);color:var(--text-1)">
+      🍀 <b>The big lesson:</b> ${verdictLine} So the "signal strength" numbers on each stock show how strongly the indicators <i>agree</i> — <b>not</b> the odds of being right. This is exactly why grown-up investors don't bet big on one stock: they spread their money out and invest for many years. Choose wisely, and good luck!
+    </div>
     <div class="bt-caveat">
-      ⚠️ <b>Caveats:</b> backtest uses Predicia's synthetic price data (not real historical prices) and static news/analyst signals — so it tests model logic against a consistent simulation, not real-world alpha. For a production backtest you'd need real historical OHLC + news + analyst data per ticker per date.
+      ⚠️ <b>Fine print:</b> ${usingReal ? "tested on real daily closes" : "real prices still loading — showing practice data"}; the 30-day windows overlap so these aren't fully independent samples, and past results never guarantee the future.
     </div>
   `;
 }
@@ -4263,7 +4284,7 @@ async function showExternalDetail(symbol, name) {
         <h2>📈 ${escapeHtml(name)} <span style="color:var(--text-3);font-size:14px;font-weight:600">${escapeHtml(symbol)}</span></h2>
         <div class="sub">Current price <b style="color:var(--text-1)">${fmtPrice(last)}</b> · ${prices.length}-day change <b style="color:${totalChange >= 0 ? 'var(--up)' : 'var(--down)'}">${fmtPct(totalChange)}</b></div>
       </div>
-      <div class="verdict-pill ${p.verdict}">${v.icon} ${v.text} — ${fmtConf(p.confidence)}% sure</div>
+      <div class="verdict-pill ${p.verdict}">${v.icon} ${v.text} · ${fmtConf(p.confidence)}% signal strength</div>
     </div>
     <div class="disclaimer" style="margin:12px 0">
       <span style="font-size:18px;line-height:1">🔎</span>
@@ -4272,6 +4293,7 @@ async function showExternalDetail(symbol, name) {
     ${bigChart(prices.slice(-30), p.verdict)}
     <div class="models-section">
       <h3>📐 Three-Model Comparison</h3>
+      <p class="sub">The % is each model's <b>signal strength</b> (how strongly its indicators agree) — not the odds of being right. On real history, models like these guess short-term direction right only about half the time.</p>
       <div class="models-grid">
         ${Object.entries(p.models).map(([key, m]) => { const mv = verdictText(m.verdict); return `
           <div class="model-card model-${key}">
