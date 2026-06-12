@@ -4158,7 +4158,12 @@ function renderLeaderboard(rows) {
   if (monthEl) monthEl.textContent = "— " + monthName(currentMonth());
   const el = document.getElementById("leaderboardList");
   if (!el) return;
-  if (!rows.length) { el.innerHTML = `<div class="holding-empty">No investors yet this month — buy a stock to get on the board!</div>`; return; }
+  if (!rows.length) {
+    el.innerHTML = `<div class="holding-empty">No investors yet this month — buy a stock to get on the board!</div>`;
+    const rv0 = document.getElementById("rankValue"); if (rv0) rv0.textContent = "—";
+    const rs0 = document.getElementById("rankSub"); if (rs0) rs0.textContent = "be the first!";
+    return;
+  }
   const myIds = player ? Object.values(player.rows || {}) : [];
   el.innerHTML = rows.map((r, i) => {
     const mine = myIds.includes(r.id);
@@ -4170,6 +4175,11 @@ function renderLeaderboard(rows) {
       <span class="${r.value >= PT_STARTING_CASH ? "up" : "down"}" style="font-weight:700">${fmtMoney(r.value)}</span>
     </div>`;
   }).join("");
+  // Your own rank, for the portfolio header
+  let myRank = 0;
+  for (let i = 0; i < rows.length; i++) { if (myIds.includes(rows[i].id)) { myRank = i + 1; break; } }
+  const rv = document.getElementById("rankValue"); if (rv) rv.textContent = myRank ? "#" + myRank : "Not ranked yet";
+  const rs = document.getElementById("rankSub"); if (rs) rs.textContent = "of " + rows.length + " investor" + (rows.length === 1 ? "" : "s");
 }
 
 let leaderboardTimer = null;
@@ -4399,6 +4409,9 @@ document.getElementById("paperToggle").addEventListener("click", () => {
 
 /* ---------- PAPER TRADING RENDERING ---------- */
 function renderPaperTrading() {
+  // Your name at the top of your portfolio
+  const heroH1 = document.querySelector("#paperTradingView .paper-hero h1");
+  if (heroH1) heroH1.textContent = (player && player.username) ? "👤 " + player.username : "📊 Paper Trading Mode";
   // Summary
   const cash = portfolio.cash;
   const held = portfolioHoldingsValue();
@@ -4423,6 +4436,11 @@ function renderPaperTrading() {
       <div class="ps-label">Holdings Value</div>
       <div class="ps-value">${fmtMoney(held)}</div>
       <div class="ps-sub">${Object.keys(portfolio.holdings).length} stocks owned</div>
+    </div>
+    <div class="ps-stat">
+      <div class="ps-label">🏆 Your Rank</div>
+      <div class="ps-value" id="rankValue">—</div>
+      <div class="ps-sub" id="rankSub">loading…</div>
     </div>
   `;
 
