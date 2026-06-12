@@ -1728,6 +1728,7 @@
       <input type="search" id="buySearch" placeholder="🔎 Search any company…" autocomplete="off"
         style="width:100%;max-width:320px;margin-bottom:12px;padding:8px 12px;border:1px solid var(--border);border-radius:10px;background:var(--card);color:var(--text-1);font-size:14px" />
       <div class="buy-grid" id="buyGrid"></div>
+      <div id="marketResults"></div>
     </div>
   </section>
 
@@ -4005,11 +4006,14 @@ function savePortfolio() {
 }
 
 function currentPriceOf(ticker) {
-  // Prefer live price (updates every 5s); fall back to historical close
+  // Live price first — the same map searched/external companies get cached in too.
   if (livePrices && livePrices[ticker] !== undefined) return livePrices[ticker];
   const c = COMPANIES.find(co => co.ticker === ticker);
-  if (!c) return 0;
-  return c.prices[c.prices.length - 1];
+  if (c) return c.prices[c.prices.length - 1];
+  // External (searched) holding whose live price hasn't loaded yet → use avg cost.
+  const h = portfolio.holdings[ticker];
+  if (h && h.shares > 0) return h.totalCost / h.shares;
+  return 0;
 }
 
 function portfolioHoldingsValue() {
@@ -4167,6 +4171,66 @@ async function refreshLeaderboard() {
   renderWinnerBanner(results[1]);
 }
 
+/* ---------- MARKET SEARCH — add any company to your portfolio ----------
+   Searches the whole market via /api/search, fetches a chosen company's live
+   price via /api/quote, then buys it like any other holding. Searched companies
+   have a live price + buy/sell but no Predicia prediction. */
+let externalInfo = {};      // { TICKER: { name } } for searched (non-curated) companies
+let marketSearchTimer = null;
+
+async function runMarketSearch(q) {
+  const box = document.getElementById("marketResults");
+  if (!box) return;
+  if (!q || q.length < 2) { box.innerHTML = ""; return; }
+  box.innerHTML = `<div class="paper-sub" style="padding:6px 0">Searching the market…</div>`;
+  let results = [];
+  try {
+    const r = await fetch("/api/search?q=" + encodeURIComponent(q));
+    if (r.ok) results = await r.json();
+  } catch (e) {}
+  results = (results || []).filter(x => !COMPANIES.some(c => c.ticker === x.symbol)); // not already in the list above
+  if (!results.length) {
+    box.innerHTML = `<div class="paper-sub" style="padding:6px 0">No other companies found for "${escapeHtml(q)}". Try a different name, or a ticker like AAPL.</div>`;
+    return;
+  }
+  box.innerHTML = `<div class="paper-sub" style="margin:10px 0 4px">🌐 Other companies on the market (tap to add):</div>` +
+    `<div class="buy-grid">` + results.map(x => `
+      <div class="buy-card market-result" data-symbol="${escapeHtml(x.symbol)}" data-name="${escapeHtml(x.name)}">
+        <div class="info"><div class="co-name">📈 ${escapeHtml(x.name)}</div><div class="co-meta">${escapeHtml(x.symbol)}</div></div>
+        <div class="co-price">＋ add</div>
+      </div>`).join("") + `</div>`;
+  box.querySelectorAll(".market-result").forEach(el => {
+    el.addEventListener("click", () => addFromMarket(el.dataset.symbol, el.dataset.name));
+  });
+}
+
+// Fetch a searched company's live price, then open the buy modal for it.
+async function addFromMarket(symbol, name) {
+  let price = 0;
+  try {
+    const r = await fetch("/api/quote?symbol=" + encodeURIComponent(symbol));
+    if (r.ok) { const j = await r.json(); if (typeof j.c === "number" && j.c > 0) price = j.c; }
+  } catch (e) {}
+  if (!price) { alert("Couldn't get a live price for " + name + " right now — try again in a moment."); return; }
+  livePrices[symbol] = price;                 // value it like any other holding
+  externalInfo[symbol] = { name: name };
+  openBuyModal(symbol);
+}
+
+// On entering the game, refresh live prices for any searched companies you hold.
+async function refreshExternalHoldings() {
+  const exts = Object.keys(portfolio.holdings).filter(t => portfolio.holdings[t] && portfolio.holdings[t].ext);
+  let any = false;
+  for (const t of exts) {
+    externalInfo[t] = externalInfo[t] || { name: portfolio.holdings[t].name || t };
+    try {
+      const r = await fetch("/api/quote?symbol=" + encodeURIComponent(t));
+      if (r.ok) { const j = await r.json(); if (typeof j.c === "number" && j.c > 0) { livePrices[t] = j.c; any = true; } }
+    } catch (e) {}
+  }
+  if (any) renderPaperTrading();
+}
+
 function switchView(view) {
   currentView = view;
   const dashEls = [
@@ -4187,6 +4251,7 @@ function switchView(view) {
     paperBtn.classList.add("active");
     ensureCurrentMonth();
     renderPaperTrading();
+    refreshExternalHoldings();
     refreshLeaderboard();
     ensurePlayer(() => { pushScore().then(refreshLeaderboard); });
     if (leaderboardTimer) clearInterval(leaderboardTimer);
@@ -4251,8 +4316,9 @@ function renderPaperTrading() {
   } else {
     holdingsEl.innerHTML = tickers.map(t => {
       const c = COMPANIES.find(co => co.ticker === t);
-      if (!c) return "";
       const h = portfolio.holdings[t];
+      const coName = c ? c.name : (h.name || t);
+      const coEmoji = c ? c.emoji : "📈";
       const cur = currentPriceOf(t);
       const value = h.shares * cur;
       const avgCost = h.totalCost / h.shares;
@@ -4263,7 +4329,7 @@ function renderPaperTrading() {
       return `
         <div class="holding-card">
           <div class="top-row">
-            <div class="ho-name">${c.emoji} ${c.name} <span class="ho-ticker">${c.ticker}</span></div>
+            <div class="ho-name">${coEmoji} ${coName} <span class="ho-ticker">${t}</span></div>
             <button class="btn-sell" data-ticker="${t}">Sell</button>
           </div>
           <div class="holding-stats">
@@ -4312,12 +4378,15 @@ function renderPaperTrading() {
 /* ---------- BUY MODAL ---------- */
 function openBuyModal(ticker) {
   const c = COMPANIES.find(co => co.ticker === ticker);
-  if (!c) return;
+  const ext = !c ? externalInfo[ticker] : null;
+  if (!c && !ext) return;
+  const name = c ? c.name : ext.name;
+  const emoji = c ? c.emoji : "📈";
   const price = currentPriceOf(ticker);
   const maxAffordable = portfolio.cash / price;
 
   document.getElementById("modalContent").innerHTML = `
-    <h3>${c.emoji} Buy ${c.name}</h3>
+    <h3>${emoji} Buy ${name}</h3>
     <p class="modal-sub">Enter either a number of shares OR a dollar amount to invest — the two fields stay in sync. Fractional shares OK.</p>
     <div class="modal-row"><span class="label">Current price</span><span class="val">${fmtMoney(price)}</span></div>
     <div class="modal-row"><span class="label">Your cash</span><span class="val">${fmtMoney(portfolio.cash)}</span></div>
@@ -4527,6 +4596,10 @@ function buyShares(ticker, shares, price) {
   }
   portfolio.holdings[ticker].shares += shares;
   portfolio.holdings[ticker].totalCost += cost;
+  if (externalInfo[ticker]) {                 // a searched (non-curated) company
+    portfolio.holdings[ticker].name = externalInfo[ticker].name;
+    portfolio.holdings[ticker].ext = true;
+  }
   savePortfolio();
   pushScore().then(refreshLeaderboard);
   return true;
@@ -4633,6 +4706,10 @@ document.getElementById("resetPortfolio").addEventListener("click", () => {
 document.getElementById("buySearch").addEventListener("input", function () {
   buySearchTerm = this.value.toLowerCase().trim();
   renderPaperTrading();
+  // Also search the whole market (debounced), shown below the curated grid.
+  const q = this.value.trim();
+  clearTimeout(marketSearchTimer);
+  marketSearchTimer = setTimeout(() => runMarketSearch(q), 350);
 });
 
 // Live-update if user changes system theme (only if they haven't set a preference)
