@@ -1695,6 +1695,7 @@
   </div>
 
   <div class="cards" id="cards"></div>
+  <div id="cardMarketResults"></div>
 
   <section class="detail" id="detail" style="display:none"></section>
 
@@ -3760,6 +3761,10 @@ document.getElementById("filterToggle").addEventListener("click", function () {
 document.getElementById("cardSearch").addEventListener("input", function () {
   searchTerm = this.value.toLowerCase().trim();
   renderCards();
+  // Also search the whole market — clicking a result runs a real prediction.
+  const q = this.value.trim();
+  clearTimeout(marketSearchTimer);
+  marketSearchTimer = setTimeout(() => marketSearch(q, "cardMarketResults", showExternalDetail, "see prediction →"), 350);
 });
 
 /* ---------- THEME (light / dark) ---------- */
@@ -4178,8 +4183,10 @@ async function refreshLeaderboard() {
 let externalInfo = {};      // { TICKER: { name } } for searched (non-curated) companies
 let marketSearchTimer = null;
 
-async function runMarketSearch(q) {
-  const box = document.getElementById("marketResults");
+// Generalized market search, used by both pages. Renders results into `boxId`;
+// clicking one calls onPick(symbol, name). `actionLabel` is the per-result hint.
+async function marketSearch(q, boxId, onPick, actionLabel) {
+  const box = document.getElementById(boxId);
   if (!box) return;
   if (!q || q.length < 2) { box.innerHTML = ""; return; }
   box.innerHTML = `<div class="paper-sub" style="padding:6px 0">Searching the market…</div>`;
@@ -4193,15 +4200,77 @@ async function runMarketSearch(q) {
     box.innerHTML = `<div class="paper-sub" style="padding:6px 0">No other companies found for "${escapeHtml(q)}". Try a different name, or a ticker like AAPL.</div>`;
     return;
   }
-  box.innerHTML = `<div class="paper-sub" style="margin:10px 0 4px">🌐 Other companies on the market (tap to add):</div>` +
+  box.innerHTML = `<div class="paper-sub" style="margin:10px 0 4px">🌐 Other companies on the market:</div>` +
     `<div class="buy-grid">` + results.map(x => `
       <div class="buy-card market-result" data-symbol="${escapeHtml(x.symbol)}" data-name="${escapeHtml(x.name)}">
         <div class="info"><div class="co-name">📈 ${escapeHtml(x.name)}</div><div class="co-meta">${escapeHtml(x.symbol)}</div></div>
-        <div class="co-price">＋ add</div>
+        <div class="co-price">${actionLabel}</div>
       </div>`).join("") + `</div>`;
   box.querySelectorAll(".market-result").forEach(el => {
-    el.addEventListener("click", () => addFromMarket(el.dataset.symbol, el.dataset.name));
+    el.addEventListener("click", () => onPick(el.dataset.symbol, el.dataset.name));
   });
+}
+
+// Build a temporary company object from real price history so predicia() can run.
+// Technical signals (momentum/trend/etc.) are REAL; news is neutral (none), and
+// analyst/buzz are seeded from the ticker — honest about what's real vs not.
+function makeExternalCompany(symbol, name, prices) {
+  const first = prices[0], last = prices[prices.length - 1], n = prices.length;
+  const trend = (first > 0 && n > 1) ? Math.pow(last / first, 1 / n) - 1 : 0;
+  let seed = 0;
+  for (let i = 0; i < symbol.length; i++) seed = (seed * 31 + symbol.charCodeAt(i)) % 100000;
+  return { ticker: symbol, name: name, emoji: "📈", prices: prices, events: [], sector: "", seed: seed, trend: trend };
+}
+
+// Main-page: fetch a searched company's REAL price history, run a real prediction,
+// and show it in the detail panel.
+async function showExternalDetail(symbol, name) {
+  const detail = document.getElementById("detail");
+  detail.style.display = "block";
+  detail.innerHTML = `<div style="padding:24px;text-align:center;color:var(--text-2)">Fetching real prices for ${escapeHtml(name)}…</div>`;
+  detail.scrollIntoView({ behavior: "smooth", block: "start" });
+  let prices = null;
+  try {
+    const r = await fetch("/api/history?symbol=" + encodeURIComponent(symbol));
+    if (r.ok) { const j = await r.json(); if (Array.isArray(j.prices) && j.prices.length >= 25) prices = j.prices; }
+  } catch (e) {}
+  if (!prices) {
+    detail.innerHTML = `<div style="padding:24px;color:var(--text-2)">Couldn't get enough price history for ${escapeHtml(name)} to predict it. Try a bigger US-listed company (or its ticker, like AAPL).</div>`;
+    return;
+  }
+  const ext = makeExternalCompany(symbol, name, prices);
+  const p = predicia(ext);
+  const last = prices[prices.length - 1], first = prices[0];
+  const totalChange = (last - first) / first;
+  const v = verdictText(p.verdict);
+  document.querySelectorAll(".card").forEach(c => c.classList.remove("active"));
+  detail.innerHTML = `
+    <div class="top">
+      <div>
+        <h2>📈 ${escapeHtml(name)} <span style="color:var(--text-3);font-size:14px;font-weight:600">${escapeHtml(symbol)}</span></h2>
+        <div class="sub">Current price <b style="color:var(--text-1)">${fmtPrice(last)}</b> · ${prices.length}-day change <b style="color:${totalChange >= 0 ? 'var(--up)' : 'var(--down)'}">${fmtPct(totalChange)}</b></div>
+      </div>
+      <div class="verdict-pill ${p.verdict}">${v.icon} ${v.text} — ${fmtConf(p.confidence)}% sure</div>
+    </div>
+    <div class="disclaimer" style="margin:12px 0">
+      <span style="font-size:18px;line-height:1">🔎</span>
+      <div><b>Real prediction from live market prices.</b> ${escapeHtml(name)} isn't one of Predicia's tracked companies, so there's no news data, backtest, or company info — just the price-based prediction. And remember, these predictions don't always work — choose wisely! 🍀</div>
+    </div>
+    ${bigChart(prices.slice(-30), p.verdict)}
+    <div class="models-section">
+      <h3>📐 Three-Model Comparison</h3>
+      <div class="models-grid">
+        ${Object.entries(p.models).map(([key, m]) => { const mv = verdictText(m.verdict); return `
+          <div class="model-card model-${key}">
+            <span class="model-tag">${m.tag}</span>
+            <div class="model-name">${m.name}</div>
+            <div class="model-origin">${m.origin}</div>
+            <div class="model-score-row"><div class="model-verdict ${m.verdict}">${mv.icon} ${mv.text}</div><div class="model-conf">${fmtConf(m.confidence)}%</div></div>
+            <div class="model-score-num">Score: ${(m.score * 100).toFixed(1)} / 100</div>
+          </div>`; }).join("")}
+      </div>
+    </div>`;
+  detail.scrollIntoView({ behavior: "smooth", block: "start" });
 }
 
 // Fetch a searched company's live price, then open the buy modal for it.
@@ -4709,7 +4778,7 @@ document.getElementById("buySearch").addEventListener("input", function () {
   // Also search the whole market (debounced), shown below the curated grid.
   const q = this.value.trim();
   clearTimeout(marketSearchTimer);
-  marketSearchTimer = setTimeout(() => runMarketSearch(q), 350);
+  marketSearchTimer = setTimeout(() => marketSearch(q, "marketResults", addFromMarket, "＋ add"), 350);
 });
 
 // Live-update if user changes system theme (only if they haven't set a preference)
