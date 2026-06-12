@@ -2778,6 +2778,9 @@ async function _refreshRealPrices() {
 
 // Auto-fetch on page load (after initial render)
 setTimeout(() => { refreshRealPrices().catch(e => console.error(e)); }, 1500);
+// Swap in real price history (cached daily in Supabase). Deferred so the
+// Supabase config below is defined by the time it runs.
+setTimeout(initRealHistories, 1800);
 
 // Click the LIVE pill to manually refresh
 document.addEventListener("DOMContentLoaded", () => {
@@ -4298,6 +4301,55 @@ async function refreshExternalHoldings() {
     } catch (e) {}
   }
   if (any) renderPaperTrading();
+}
+
+/* ---------- REAL HISTORY — run the app on real prices by default ----------
+   Reads the daily-refreshed real histories from Supabase and swaps them into
+   COMPANIES, so the grid AND detail run on real prices. Companies not yet cached
+   (or non-US ones the feed can't do) keep their practice data — real by default,
+   practice only as a fallback. Also nudges the daily refresh along (8/min cap). */
+const HIST_REFRESH_URL = "/api/refresh-histories";
+
+async function applyRealHistories() {
+  try {
+    const r = await fetch(SUPABASE_URL + "/rest/v1/histories?select=ticker,prices", { headers: SUPA_HEADERS });
+    if (!r.ok) return 0;
+    const rows = await r.json();
+    let applied = 0;
+    (rows || []).forEach(row => {
+      const c = COMPANIES.find(co => co.ticker === row.ticker);
+      if (c && Array.isArray(row.prices) && row.prices.length >= 25) {
+        c.prices = row.prices.map(Number);
+        c.realData = true;
+        if (livePrices[c.ticker] !== undefined) c.prices[c.prices.length - 1] = livePrices[c.ticker];
+        applied++;
+      }
+    });
+    if (applied) {
+      renderCards();
+      if (typeof renderBacktestSummary === "function") renderBacktestSummary();
+      if (currentView === "paper" && typeof renderPaperTrading === "function") renderPaperTrading();
+    }
+    return applied;
+  } catch (e) { return 0; }
+}
+
+// Ask the server to refresh up to 8 stale/missing companies (it self-guards on 20h).
+async function nudgeHistoryRefresh() {
+  try {
+    const syms = COMPANIES.map(c => finnhubSymbolFor(c.ticker)).filter(Boolean).join(",");
+    const r = await fetch(HIST_REFRESH_URL + "?symbols=" + encodeURIComponent(syms));
+    return r.ok ? await r.json() : null;
+  } catch (e) { return null; }
+}
+
+async function initRealHistories() {
+  await applyRealHistories();              // use whatever's cached right now
+  const res = await nudgeHistoryRefresh();  // fetch up to 8 stale ones
+  if (res && res.refreshed > 0) {
+    await applyRealHistories();             // apply the freshly-cached ones
+    if (res.remaining > 0) setTimeout(initRealHistories, 65000); // keep filling, ~1/min (rate limit)
+  }
 }
 
 function switchView(view) {
