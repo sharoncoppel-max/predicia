@@ -1227,42 +1227,6 @@
     line-height: 1.5;
   }
 
-  /* AI lab — interactive "can AI beat the market?" experiment */
-  .ai-lab {
-    margin: 14px 0 0;
-    padding: 18px 20px;
-    background: var(--card);
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-  }
-  .ai-run-btn {
-    margin-top: 12px;
-    padding: 10px 20px;
-    font-size: 14px; font-weight: 700;
-    color: #fff; background: var(--brand);
-    border: none; border-radius: 999px; cursor: pointer;
-  }
-  .ai-run-btn:hover { filter: brightness(1.08); }
-  .ai-run-btn:disabled { opacity: 0.6; cursor: default; }
-  .ai-grid {
-    display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
-    gap: 12px; margin-top: 16px;
-  }
-  .ai-stat {
-    padding: 14px; border-radius: var(--radius-sm);
-    background: var(--card-soft); border: 1px solid var(--border); text-align: center;
-  }
-  .ai-stat .ai-label { font-size: 12px; color: var(--text-2); min-height: 30px; }
-  .ai-stat .ai-num { font-size: 30px; font-weight: 800; margin: 6px 0 2px; }
-  .ai-stat .ai-sub { font-size: 11px; color: var(--text-3); }
-  .ai-num.good { color: var(--up); }
-  .ai-num.bad  { color: var(--down); }
-  .ai-lesson {
-    margin-top: 14px; padding: 14px 16px; line-height: 1.55;
-    border-left: 3px solid var(--brand); background: var(--brand-soft);
-    border-radius: var(--radius-sm); font-size: 13px; color: var(--text-1);
-  }
-
   /* Expected-range / volatility panel (the science-backed part) */
   .range-panel {
     margin-top: 18px;
@@ -1763,15 +1727,6 @@
 
   <!-- BACKTEST SUMMARY — overall model performance over last 6 months -->
   <div class="backtest-summary" id="backtestSummary"></div>
-
-  <!-- AI LAB — trains a real ML model live to show it can't beat the market -->
-  <div class="ai-lab" id="aiLab">
-    <div class="bt-head">
-      <h3>🤖 Can a real AI beat the market? Try it.</h3>
-      <div class="sub">This trains an actual machine-learning model (logistic regression) right here in your browser, on 6 months of real prices — then tests it on days it has never seen. Watch what happens.</div>
-    </div>
-    <button class="ai-run-btn" id="aiRunBtn" onclick="runAiLab()">▶ Train the AI</button>
-  </div>
 
   <div class="filter-bar" id="filterBar">
     <div class="filter-info">
@@ -3878,109 +3833,6 @@ function renderBacktestSummary() {
   `;
 }
 
-/* ---------- AI LAB ----------
-   Trains a real logistic-regression classifier in the browser on the same
-   point-in-time signals, time-split (learn on the past, test on the unseen
-   future). The point isn't to win — it's to SHOW that a real ML model
-   overfits: great on the past, ~coin-flip on the future, often beaten by a
-   model that always guesses "up". The best investing lesson, demonstrated. */
-function runAiLab() {
-  const el = document.getElementById("aiLab");
-  const btn = document.getElementById("aiRunBtn");
-  if (!el) return;
-  if (btn) { btn.disabled = true; btn.textContent = "🧠 Training on 6 months of real prices…"; }
-  // Defer so the button text paints before the (brief) synchronous crunch.
-  setTimeout(() => {
-    const KEYS = Object.keys(WEIGHTS);                 // the 10 signals
-    const real = COMPANIES.filter(c => c.realData && c.prices.length >= 80);
-    if (real.length < 5) {
-      el.querySelector(".ai-grid")?.remove();
-      if (btn) { btn.disabled = false; btn.textContent = "▶ Train the AI"; }
-      const m = document.createElement("div");
-      m.className = "ai-lesson";
-      m.textContent = "Real price history is still loading — give it a few seconds and try again.";
-      el.appendChild(m);
-      return;
-    }
-    // Build samples: features = point-in-time signals, label = up/down 30 days later.
-    const data = [];
-    for (const c of real) {
-      const end = c.prices.length - 30;
-      for (let d = 30; d <= end; d += 3) {
-        const fr = (c.prices[d + 30] - c.prices[d]) / c.prices[d];
-        if (Math.abs(fr) < 0.005) continue;            // skip flat (no clear answer)
-        const s = signalsAt(c, d);
-        data.push({ day: d, x: KEYS.map(k => s[k]), y: fr > 0 ? 1 : 0, heur: scorePredicia(s) > 0 ? 1 : 0 });
-      }
-    }
-    // Time split: learn on the earlier 65% of days, test on the later 35% (unseen future).
-    const sortedDays = data.map(s => s.day).sort((a, b) => a - b);
-    const cut = sortedDays[Math.floor(sortedDays.length * 0.65)];
-    const tr = data.filter(s => s.day <= cut), te = data.filter(s => s.day > cut);
-    const n = KEYS.length;
-    // Standardize features using training stats only.
-    const mean = KEYS.map((_, j) => tr.reduce((a, s) => a + s.x[j], 0) / tr.length);
-    const sd = KEYS.map((_, j) => Math.sqrt(tr.reduce((a, s) => a + (s.x[j] - mean[j]) ** 2, 0) / tr.length) || 1);
-    const normOf = s => s.x.map((v, j) => (v - mean[j]) / sd[j]);
-    const trN = tr.map(s => ({ nx: normOf(s), y: s.y }));   // precompute once
-    // Logistic regression via gradient descent.
-    let w = new Array(n).fill(0), b = 0;
-    const LR = 0.1, L2 = 0.001;
-    for (let ep = 0; ep < 300; ep++) {
-      const gw = new Array(n).fill(0); let gb = 0;
-      for (const s of trN) {
-        let z = b; for (let j = 0; j < n; j++) z += s.nx[j] * w[j];
-        const e = 1 / (1 + Math.exp(-z)) - s.y;
-        for (let j = 0; j < n; j++) gw[j] += e * s.nx[j];
-        gb += e;
-      }
-      for (let j = 0; j < n; j++) w[j] -= LR * (gw[j] / trN.length + L2 * w[j]);
-      b -= LR * gb / trN.length;
-    }
-    const lrPred = s => { const nx = normOf(s); let z = b; for (let j = 0; j < n; j++) z += nx[j] * w[j]; return (1 / (1 + Math.exp(-z))) > 0.5 ? 1 : 0; };
-    const accOf = (set, pred) => set.length ? 100 * set.filter(s => pred(s) === s.y).length / set.length : 0;
-    const lrTrain = accOf(tr, lrPred);
-    const lrTest  = accOf(te, lrPred);
-    const heurTest = accOf(te, s => s.heur);
-    const upTest = accOf(te, () => 1);                       // "always guess up"
-    const overfit = lrTrain - lrTest;
-
-    const numCls = v => v >= 53 ? "good" : v < 48 ? "bad" : "";
-    el.innerHTML = `
-      <div class="bt-head">
-        <h3>🤖 Can a real AI beat the market? — the experiment</h3>
-        <div class="sub">Trained a logistic-regression model on ${tr.length} examples from the past, then tested it on ${te.length} days it had <b>never seen</b>.</div>
-      </div>
-      <div class="ai-grid">
-        <div class="ai-stat">
-          <div class="ai-label">🤖 AI on the PAST<br>(data it studied)</div>
-          <div class="ai-num good">${lrTrain.toFixed(0)}%</div>
-          <div class="ai-sub">looks like a genius…</div>
-        </div>
-        <div class="ai-stat">
-          <div class="ai-label">🤖 AI on the FUTURE<br>(days it never saw)</div>
-          <div class="ai-num ${numCls(lrTest)}">${lrTest.toFixed(0)}%</div>
-          <div class="ai-sub">…then flops 😬</div>
-        </div>
-        <div class="ai-stat">
-          <div class="ai-label">📊 Our 3 models<br>on the future</div>
-          <div class="ai-num ${numCls(heurTest)}">${heurTest.toFixed(0)}%</div>
-          <div class="ai-sub">also a coin flip</div>
-        </div>
-        <div class="ai-stat">
-          <div class="ai-label">🪙 Robot that ALWAYS<br>guesses "up"</div>
-          <div class="ai-num ${numCls(upTest)}">${upTest.toFixed(0)}%</div>
-          <div class="ai-sub">learned nothing — still competitive</div>
-        </div>
-      </div>
-      <div class="ai-lesson">
-        🍀 <b>See what happened?</b> The AI scored <b>${lrTrain.toFixed(0)}%</b> on the data it studied, then dropped to <b>${lrTest.toFixed(0)}%</b> on the future — a ${overfit.toFixed(0)}-point fall. That's <b>overfitting</b>: it memorized the past instead of learning a real rule. ${upTest >= lrTest ? `A brainless robot that just always says "up" got <b>${upTest.toFixed(0)}%</b> — it <b>beat the real AI</b> without learning anything.` : `Even so, it barely matched a robot that always says "up" (${upTest.toFixed(0)}%).`} This is the whole point: <b>nobody can reliably predict short-term stock moves</b> — not us, not a real AI, not the pros. So the smart move isn't a better guess; it's to spread your money out and invest for the long run.
-      </div>
-      <button class="ai-run-btn" onclick="runAiLab()">↻ Run it again</button>
-    `;
-  }, 30);
-}
-
 /* ---------- INIT ---------- */
 document.getElementById("dateBadge").textContent = TODAY;
 renderCards();
@@ -4382,6 +4234,9 @@ function ensurePlayer(after) {
     savePlayer();
     await pushScore();
     closeModal();
+    // Re-render so the hero shows "👤 <name>" and the rank stat picks up (the
+    // first render happened before a player existed).
+    if (typeof renderPaperTrading === "function" && currentView === "paper") renderPaperTrading();
     if (after) after();
   }
   document.getElementById("unameSave").addEventListener("click", save);
