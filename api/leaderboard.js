@@ -16,3 +16,5 @@ module.exports = async (req, res) => {
     res.status(200).json([]);  // a flaky board just shows empty, never an error page
   }
 };
+
+// deploy: pick up SUPABASE_SERVICE_KEY (ccc6ae8)
