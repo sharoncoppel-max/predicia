@@ -4078,38 +4078,54 @@ document.getElementById("musicToggle").addEventListener("click", () => {
    your portfolio persists between page refreshes. NO REAL MONEY — this is
    for learning how investing works. */
 
-const PT_STORAGE_KEY = "predicia-portfolio-v1";
 const PT_STARTING_CASH = 1000;
 
-let portfolio = loadPortfolio();
+// ----- Server-authoritative game state -----
+// The SERVER is the referee: it owns cash + holdings and validates every trade
+// against real prices. The browser keeps a read-only CACHE of that state plus a
+// secret "pass" (token) that proves which account is ours. No score can be faked
+// in the browser, and without the matching token you can't touch anyone's row.
+const TOKEN_KEY = "predicia-token-v1";
+function getToken() {
+  let t = null;
+  try { t = localStorage.getItem(TOKEN_KEY); } catch (e) {}
+  if (!t || t.length < 16) {
+    t = "p_" + ((window.crypto && crypto.randomUUID) ? crypto.randomUUID().replace(/-/g, "")
+      : (Date.now().toString(36) + Math.random().toString(36).slice(2) + Math.random().toString(36).slice(2)));
+    try { localStorage.setItem(TOKEN_KEY, t); } catch (e) {}
+  }
+  return t;
+}
+
+let portfolio = { cash: PT_STARTING_CASH, holdings: {}, month: currentMonth(), value: PT_STARTING_CASH };
 let currentView = "dashboard"; // "dashboard" | "paper"
 
-function loadPortfolio() {
+async function gameFetch(path, body) {
   try {
-    const raw = localStorage.getItem(PT_STORAGE_KEY);
-    if (raw) {
-      const p = JSON.parse(raw);
-      if (typeof p.cash === "number" && typeof p.holdings === "object") {
-        if (!p.month) p.month = currentMonth(); // older saves: adopt this month (they'll reset at the next rollover)
-        return p;
-      }
-    }
-  } catch (e) {}
-  return { cash: PT_STARTING_CASH, holdings: {}, month: currentMonth() };
+    const r = await fetch("/api/" + path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+    const data = await r.json().catch(() => ({}));
+    return { ok: r.ok, status: r.status, data: data || {} };
+  } catch (e) { return { ok: false, status: 0, data: { error: "offline" } }; }
 }
 
-// Monthly reset: everyone starts fresh at $1,000 on the 1st of each month, so
-// each month is a fair race that lines up with crowning a monthly champion.
-function ensureCurrentMonth() {
-  const m = currentMonth();
-  if (portfolio.month !== m) {
-    portfolio = { cash: PT_STARTING_CASH, holdings: {}, month: m };
-    savePortfolio();
+// Copy the server's authoritative state into our local cache for rendering.
+function applyServerState(s) {
+  if (!s || typeof s.cash !== "number") return;
+  portfolio = { cash: s.cash, holdings: s.holdings || {}, month: s.month, value: (typeof s.value === "number") ? s.value : s.cash };
+  if (s.username) { player = { username: s.username }; savePlayer(); }
+}
+
+// Pull the latest state from the server (on entering the game + after trades).
+// If this browser has a remembered name but no server account yet (returning
+// player, or first run after the cheat-proof upgrade), create it on the fly.
+async function syncAccount() {
+  if (!player || !player.username) return;
+  let res = await gameFetch("account", { token: getToken() });
+  if (!res.ok && res.status === 404) {
+    res = await gameFetch("register", { token: getToken(), username: player.username });
+    if (!res.ok) { player = null; savePlayer(); return; }  // cached name no longer valid → re-pick
   }
-}
-
-function savePortfolio() {
-  try { localStorage.setItem(PT_STORAGE_KEY, JSON.stringify(portfolio)); } catch (e) {}
+  if (res.ok) applyServerState(res.data);
 }
 
 function currentPriceOf(ticker) {
@@ -4123,17 +4139,9 @@ function currentPriceOf(ticker) {
   return 0;
 }
 
-function portfolioHoldingsValue() {
-  let v = 0;
-  for (const ticker in portfolio.holdings) {
-    v += portfolio.holdings[ticker].shares * currentPriceOf(ticker);
-  }
-  return v;
-}
-
-function portfolioTotalValue() {
-  return portfolio.cash + portfolioHoldingsValue();
-}
+// Headline value comes from the SERVER, so it always matches the leaderboard.
+function portfolioTotalValue() { return (typeof portfolio.value === "number") ? portfolio.value : portfolio.cash; }
+function portfolioHoldingsValue() { return Math.max(0, portfolioTotalValue() - portfolio.cash); }
 
 function fmtMoney(n) {
   return "$" + n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -4165,7 +4173,7 @@ function escapeHtml(s) { return String(s).replace(/[&<>"']/g, c => ({ "&": "&amp
 // Player identity for this browser: { username, rows: { "YYYY-MM": rowId } }
 const PLAYER_KEY = "predicia-player-v1";
 let player = loadPlayer();
-function loadPlayer() { try { const p = JSON.parse(localStorage.getItem(PLAYER_KEY)); if (p && p.username) { p.rows = p.rows || {}; return p; } } catch (e) {} return null; }
+function loadPlayer() { try { const p = JSON.parse(localStorage.getItem(PLAYER_KEY)); if (p && p.username) return { username: p.username }; } catch (e) {} return null; }
 function savePlayer() { try { localStorage.setItem(PLAYER_KEY, JSON.stringify(player)); } catch (e) {} }
 
 // Keep names friendly: 3–16 chars, simple characters, block obvious slurs.
@@ -4179,34 +4187,15 @@ function checkUsername(raw) {
   return { ok: true, name };
 }
 
-// Post this browser's current total to the shared board (one row per month).
-async function pushScore() {
-  if (!player || !player.username) return;
-  const m = currentMonth();
-  const value = portfolioTotalValue();
-  try {
-    if (player.rows[m]) {
-      await fetch(SUPABASE_URL + "/rest/v1/players?id=eq." + player.rows[m], { method: "PATCH", headers: SUPA_HEADERS, body: JSON.stringify({ value: value, updated_at: new Date().toISOString() }) });
-    } else {
-      const r = await fetch(SUPABASE_URL + "/rest/v1/players", { method: "POST", headers: Object.assign({ "Prefer": "return=representation" }, SUPA_HEADERS), body: JSON.stringify({ username: player.username, value: value, month: m }) });
-      const rows = await r.json();
-      if (rows && rows[0]) { player.rows[m] = rows[0].id; savePlayer(); }
-    }
-  } catch (e) { /* offline — board just won't update this time */ }
-}
-
+// The leaderboard comes from the server now (exposes only username + value,
+// never tokens or holdings). Scores are written server-side on each trade, so
+// the browser can't post a score directly anymore — that's what makes it
+// cheat-proof and stops anyone editing another player's row.
 async function fetchLeaderboard() {
   try {
-    const r = await fetch(SUPABASE_URL + "/rest/v1/players?month=eq." + currentMonth() + "&order=value.desc&limit=100&select=id,username,value", { headers: SUPA_HEADERS });
+    const r = await fetch("/api/leaderboard");
     return r.ok ? await r.json() : [];
   } catch (e) { return []; }
-}
-async function fetchWinner() {
-  try {
-    const r = await fetch(SUPABASE_URL + "/rest/v1/players?month=eq." + lastMonth() + "&order=value.desc&limit=1&select=username,value", { headers: SUPA_HEADERS });
-    const rows = r.ok ? await r.json() : [];
-    return rows[0] || null;
-  } catch (e) { return null; }
 }
 
 // First time in, ask for a username, create the row, then continue.
@@ -4230,12 +4219,18 @@ function ensurePlayer(after) {
   async function save() {
     const c = checkUsername(input.value);
     if (!c.ok) { err.textContent = c.msg; return; }
-    player = { username: c.name, rows: {} };
-    savePlayer();
-    await pushScore();
+    const btn = document.getElementById("unameSave");
+    if (btn) { btn.disabled = true; btn.textContent = "Starting…"; }
+    // Create the account SERVER-side (the server validates the name too).
+    const res = await gameFetch("register", { token: getToken(), username: c.name });
+    if (!res.ok) {
+      err.textContent = res.data.error || "Couldn't start — please try again.";
+      if (btn) { btn.disabled = false; btn.textContent = "Start playing ▶"; }
+      return;
+    }
+    applyServerState(res.data);
     closeModal();
-    // Re-render so the hero shows "👤 <name>" and the rank stat picks up (the
-    // first render happened before a player existed).
+    // Re-render so the hero shows "👤 <name>" and the rank stat picks up.
     if (typeof renderPaperTrading === "function" && currentView === "paper") renderPaperTrading();
     if (after) after();
   }
@@ -4266,9 +4261,9 @@ function renderLeaderboard(rows) {
     const rs0 = document.getElementById("rankSub"); if (rs0) rs0.textContent = "be the first!";
     return;
   }
-  const myIds = player ? Object.values(player.rows || {}) : [];
+  const myName = (player && player.username) ? player.username : null;
   el.innerHTML = rows.map((r, i) => {
-    const mine = myIds.includes(r.id);
+    const mine = myName && r.username === myName;
     const medal = i === 0 ? "🥇" : i === 1 ? "🥈" : i === 2 ? "🥉" : (i + 1) + ".";
     const meStyle = mine ? ";background:var(--brand-soft);border-radius:8px;font-weight:700" : "";
     return `<div style="display:flex;align-items:center;gap:12px;padding:8px 12px;border-bottom:1px solid var(--border)${meStyle}">
@@ -4279,16 +4274,15 @@ function renderLeaderboard(rows) {
   }).join("");
   // Your own rank, for the portfolio header
   let myRank = 0;
-  for (let i = 0; i < rows.length; i++) { if (myIds.includes(rows[i].id)) { myRank = i + 1; break; } }
+  for (let i = 0; i < rows.length; i++) { if (myName && rows[i].username === myName) { myRank = i + 1; break; } }
   const rv = document.getElementById("rankValue"); if (rv) rv.textContent = myRank ? "#" + myRank : "Not ranked yet";
   const rs = document.getElementById("rankSub"); if (rs) rs.textContent = "of " + rows.length + " investor" + (rows.length === 1 ? "" : "s");
 }
 
 let leaderboardTimer = null;
 async function refreshLeaderboard() {
-  const results = await Promise.all([fetchLeaderboard(), fetchWinner()]);
-  renderLeaderboard(results[0]);
-  renderWinnerBanner(results[1]);
+  renderLeaderboard(await fetchLeaderboard());
+  renderWinnerBanner(null);  // no stored history of past champions in the new model
 }
 
 /* ---------- MARKET SEARCH — add any company to your portfolio ----------
@@ -4527,11 +4521,13 @@ function switchView(view) {
     dashEls.forEach(el => { if (el) el.style.display = "none"; });
     paperEl.style.display = "block";
     paperBtn.classList.add("active");
-    ensureCurrentMonth();
-    renderPaperTrading();
+    renderPaperTrading();               // instant paint from the cached state
     refreshExternalHoldings();
     refreshLeaderboard();
-    ensurePlayer(() => { pushScore().then(refreshLeaderboard); });
+    // Make sure we have an account (prompt for a name if needed), then pull the
+    // authoritative state from the server and re-render. Monthly reset, scoring,
+    // and validation all happen server-side now.
+    ensurePlayer(() => { syncAccount().then(() => { renderPaperTrading(); refreshLeaderboard(); }); });
     if (leaderboardTimer) clearInterval(leaderboardTimer);
     leaderboardTimer = setInterval(refreshLeaderboard, 20000);
   } else {
@@ -4766,14 +4762,21 @@ function openBuyModal(ticker) {
 
   dollarsInput.focus();
 
-  confirmBtn.addEventListener("click", () => {
+  confirmBtn.addEventListener("click", async () => {
     const shares = parseFloat(sharesInput.value);
     if (!shares || shares <= 0) return;
-    if (buyShares(ticker, shares, price)) {
+    confirmBtn.disabled = true; confirmBtn.textContent = "Buying…";
+    const ext = externalInfo[ticker];
+    const result = await buyShares(ticker, shares, ext ? ext.name : undefined);
+    if (result === true) {
       playSfx("buy");
+      closeModal();
+      renderPaperTrading();
+      refreshLeaderboard();
+    } else {
+      errorEl.textContent = (typeof result === "string") ? result : "Couldn't buy — try again.";
+      confirmBtn.disabled = false; confirmBtn.textContent = "Buy Now";
     }
-    closeModal();
-    renderPaperTrading();
   });
   document.getElementById("modalCancelBtn").addEventListener("click", closeModal);
 }
@@ -4781,14 +4784,17 @@ function openBuyModal(ticker) {
 /* ---------- SELL MODAL ---------- */
 function openSellModal(ticker) {
   const c = COMPANIES.find(co => co.ticker === ticker);
-  if (!c) return;
   const h = portfolio.holdings[ticker];
   if (!h) return;
+  // Works for searched (non-curated) holdings too — fall back to their stored name.
+  const ext = externalInfo[ticker] || (h.ext ? { name: h.name } : null);
+  const coName = c ? c.name : (ext && ext.name ? ext.name : ticker);
+  const coEmoji = c ? c.emoji : "📈";
   const price = currentPriceOf(ticker);
   const fullValue = h.shares * price;
 
   document.getElementById("modalContent").innerHTML = `
-    <h3>${c.emoji} Sell ${c.name}</h3>
+    <h3>${coEmoji} Sell ${escapeHtml(coName)}</h3>
     <p class="modal-sub">Sell shares at the current price. The cash goes back into your wallet.</p>
     <div class="modal-row"><span class="label">Current price</span><span class="val">${fmtMoney(price)}</span></div>
     <div class="modal-row"><span class="label">You own</span><span class="val">${fmtShares(h.shares)} shares</span></div>
@@ -4836,13 +4842,18 @@ function openSellModal(ticker) {
     confirmBtn.disabled = false;
   });
   // Helper to handle a sell, play sound, and trigger confetti on profit
-  function executeSell(sharesAmt) {
+  async function executeSell(sharesAmt) {
     const avgCost = h.totalCost / h.shares;
-    const profit = (price - avgCost) * sharesAmt;
-    sellShares(ticker, sharesAmt, price);
+    const profit = (price - avgCost) * sharesAmt;   // for the celebration only
+    confirmBtn.disabled = true;
+    const result = await sellShares(ticker, sharesAmt);
+    if (result !== true) {
+      errorEl.textContent = (typeof result === "string") ? result : "Couldn't sell — try again.";
+      confirmBtn.disabled = false;
+      return;
+    }
     if (profit > 0) {
       playSfx("profit");
-      // Confetti from center of screen
       spawnConfetti(window.innerWidth / 2, window.innerHeight * 0.4);
     } else if (profit < 0) {
       playSfx("loss");
@@ -4851,6 +4862,7 @@ function openSellModal(ticker) {
     }
     closeModal();
     renderPaperTrading();
+    refreshLeaderboard();
   }
   confirmBtn.addEventListener("click", () => {
     const shares = parseFloat(sharesInput.value);
@@ -4872,41 +4884,22 @@ document.getElementById("modalBackdrop").addEventListener("click", (e) => {
   if (e.target === e.currentTarget) closeModal();
 });
 
-/* ---------- TRANSACTIONS ---------- */
-function buyShares(ticker, shares, price) {
-  // Guard the inputs at the source: a negative/zero share count or a zero price
-  // would otherwise let cash go UP or mint infinite shares (e.g. via the console).
-  if (!(shares > 0) || !(price > 0) || !isFinite(shares) || !isFinite(price)) return false;
-  const cost = shares * price;
-  if (cost > portfolio.cash) return false;
-  portfolio.cash -= cost;
-  if (!portfolio.holdings[ticker]) {
-    portfolio.holdings[ticker] = { shares: 0, totalCost: 0 };
-  }
-  portfolio.holdings[ticker].shares += shares;
-  portfolio.holdings[ticker].totalCost += cost;
-  if (externalInfo[ticker]) {                 // a searched (non-curated) company
-    portfolio.holdings[ticker].name = externalInfo[ticker].name;
-    portfolio.holdings[ticker].ext = true;
-  }
-  savePortfolio();
-  pushScore().then(refreshLeaderboard);
-  return true;
+/* ---------- TRANSACTIONS (server-validated) ----------
+   Buy/sell are sent to the server, which prices them against the real market,
+   checks them, and updates the authoritative account. We just apply whatever
+   state it returns. Returns true on success, or an error string to show. */
+async function buyShares(ticker, shares, name) {
+  if (!(shares > 0) || !isFinite(shares)) return "Enter a number of shares greater than 0.";
+  const res = await gameFetch("trade", { token: getToken(), action: "buy", ticker: ticker, shares: shares, name: name });
+  if (res.ok) { applyServerState(res.data); return true; }
+  return res.data.error || "Couldn't buy — please try again.";
 }
 
-function sellShares(ticker, shares, price) {
-  if (!(shares > 0) || !(price > 0) || !isFinite(shares) || !isFinite(price)) return false;
-  const h = portfolio.holdings[ticker];
-  if (!h || h.shares < shares - 0.0001) return false;
-  const proceeds = shares * price;
-  portfolio.cash += proceeds;
-  const ratio = shares / h.shares;
-  h.totalCost -= h.totalCost * ratio;
-  h.shares -= shares;
-  if (h.shares < 0.0001) delete portfolio.holdings[ticker];
-  savePortfolio();
-  pushScore().then(refreshLeaderboard);
-  return true;
+async function sellShares(ticker, shares) {
+  if (!(shares > 0) || !isFinite(shares)) return "Enter a number of shares greater than 0.";
+  const res = await gameFetch("trade", { token: getToken(), action: "sell", ticker: ticker, shares: shares });
+  if (res.ok) { applyServerState(res.data); return true; }
+  return res.data.error || "Couldn't sell — please try again.";
 }
 
 /* ---------- SOUND EFFECTS ----------
@@ -4982,15 +4975,14 @@ function spawnConfetti(x, y) {
   }
 }
 
-/* ---------- RESET ---------- */
-document.getElementById("resetPortfolio").addEventListener("click", () => {
-  if (confirm("Reset your portfolio? You'll lose all your trades and start over with $1,000.")) {
-    portfolio = { cash: PT_STARTING_CASH, holdings: {}, month: currentMonth() };
-    savePortfolio();
-    renderPaperTrading();
-    pushScore().then(refreshLeaderboard);
-  }
-});
+/* ---------- RESET ----------
+   No manual reset in the cheat-proof model: zeroing your own losses mid-month
+   would be a cheat. Seasons reset automatically on the 1st (server-side), so
+   the old button is hidden. */
+(function () {
+  const b = document.getElementById("resetPortfolio");
+  if (b) b.style.display = "none";
+})();
 
 // Buy-grid search — find any company by name or ticker.
 document.getElementById("buySearch").addEventListener("input", function () {
