@@ -15,6 +15,7 @@ const {
   buildSignals,
   WEIGHTS, scorePredicia, scoreGrahamValue, scoreCarhartMomentum,
   verdictFromScore, confidenceFromScore,
+  ewmaDailyVol, volForecast,
 } = engine;
 
 // --- fixtures ---------------------------------------------------------------
@@ -206,5 +207,45 @@ describe("confidenceFromScore — never exceeds the documented 94% cap", () => {
   });
   test("is symmetric in score sign", () => {
     expect(confidenceFromScore(0.15)).toBeCloseTo(confidenceFromScore(-0.15), 10);
+  });
+});
+
+// --- volatility forecast ----------------------------------------------------
+describe("ewmaDailyVol", () => {
+  test("a flat series has zero volatility", () => {
+    expect(ewmaDailyVol(flat)).toBe(0);
+  });
+  test("a bumpy series has more volatility than a smooth one", () => {
+    const smooth = Array.from({ length: 60 }, (_, i) => 100 * Math.pow(1.001, i));
+    const bumpy  = Array.from({ length: 60 }, (_, i) => 100 * Math.pow(1.001, i) * (i % 2 ? 1.05 : 0.95));
+    expect(ewmaDailyVol(bumpy)).toBeGreaterThan(ewmaDailyVol(smooth));
+  });
+  test("too little data returns 0 (no false precision)", () => {
+    expect(ewmaDailyVol([100, 101, 102])).toBe(0);
+  });
+});
+
+describe("volForecast", () => {
+  const bumpy = Array.from({ length: 80 }, (_, i) => 100 * Math.pow(1.0005, i) * (i % 2 ? 1.04 : 0.96));
+  test("range brackets the current price (low < price < high)", () => {
+    const f = volForecast(bumpy);
+    const last = bumpy[bumpy.length - 1];
+    expect(f.low).toBeLessThan(last);
+    expect(f.high).toBeGreaterThan(last);
+  });
+  test("range edges can never go negative", () => {
+    const f = volForecast(bumpy);
+    expect(f.low).toBeGreaterThan(0);
+  });
+  test("risk level matches the monthly swing thresholds", () => {
+    expect(volForecast(flat).risk).toBe("calm");                 // 0% swing
+    expect(["calm", "normal", "wild"]).toContain(volForecast(bumpy).risk);
+    // a violently swinging series must read WILD
+    const wild = Array.from({ length: 80 }, (_, i) => 100 * (i % 2 ? 1.18 : 0.82));
+    expect(volForecast(wild).risk).toBe("wild");
+  });
+  test("monthlyPct is monthlyVol as a percentage", () => {
+    const f = volForecast(bumpy);
+    expect(f.monthlyPct).toBeCloseTo(f.monthlyVol * 100, 9);
   });
 });

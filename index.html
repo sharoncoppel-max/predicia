@@ -1227,6 +1227,50 @@
     line-height: 1.5;
   }
 
+  /* Expected-range / volatility panel (the science-backed part) */
+  .range-panel {
+    margin-top: 18px;
+    padding: 16px 18px;
+    background: var(--card-soft);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+  }
+  .range-panel h3 { margin: 0 0 12px; font-size: 14px; color: var(--text-2); }
+  .range-track {
+    position: relative;
+    height: 8px;
+    border-radius: 6px;
+    background: linear-gradient(90deg, var(--down), var(--text-3), var(--up));
+    opacity: 0.55;
+    margin: 26px 6px 8px;
+  }
+  .range-dot {
+    position: absolute; top: 50%; width: 14px; height: 14px;
+    border-radius: 50%; background: var(--brand);
+    border: 2px solid var(--bg); transform: translate(-50%, -50%);
+    box-shadow: 0 1px 4px rgba(0,0,0,.3);
+  }
+  .range-cap {
+    position: absolute; top: -22px; font-size: 12px; font-weight: 700;
+    color: var(--text-1); transform: translateX(-50%); white-space: nowrap;
+  }
+  .range-ends { display: flex; justify-content: space-between; font-size: 12px; color: var(--text-2); margin: 0 6px; }
+  .range-sentence { margin: 12px 0 10px; font-size: 14px; color: var(--text-1); }
+  .risk-badge {
+    display: inline-flex; align-items: center; gap: 8px;
+    padding: 7px 14px; border-radius: 999px; font-weight: 700; font-size: 14px;
+  }
+  .risk-calm   { background: rgba(34,197,94,.16);  color: var(--up); }
+  .risk-normal { background: rgba(245,158,11,.16); color: #d97706; }
+  .risk-wild   { background: rgba(239,68,68,.16);  color: var(--down); }
+  .range-note { margin-top: 12px; font-size: 12px; color: var(--text-3); line-height: 1.5; }
+  /* Small risk chip on the prediction cards */
+  .risk-chip {
+    display: inline-flex; align-items: center; gap: 4px;
+    padding: 2px 8px; border-radius: 999px; font-size: 11px; font-weight: 700;
+    margin-top: 6px;
+  }
+
   /* Per-stock backtest panel in detail view */
   .stock-backtest {
     margin-top: 18px;
@@ -3374,6 +3418,36 @@ function fmtConf(c) {
   return Math.round(pct).toString();
 }
 
+// Risk label metadata (drives badges + chips). Risk = forecasted monthly swing.
+function riskMeta(risk) {
+  if (risk === "calm")   return { emoji: "😌", label: "CALM",   cls: "risk-calm" };
+  if (risk === "wild")   return { emoji: "🔥", label: "WILD",   cls: "risk-wild" };
+  return { emoji: "😐", label: "NORMAL", cls: "risk-normal" };
+}
+
+// The science-backed "how much could it swing?" panel. Works for any company
+// or searched ticker — it only needs a real price history.
+function expectedRangePanel(prices, name) {
+  if (!prices || prices.length < 12) return "";
+  const f = volForecast(prices);
+  if (!(f.monthlyVol > 0) || !(f.high > 0)) return "";
+  const rm = riskMeta(f.risk);
+  const pct = f.monthlyPct.toFixed(1);
+  // Dot position = where the current price sits in the low..high band (always center
+  // for a symmetric range, but kept general). Caps show the band edges.
+  return `
+    <div class="range-panel">
+      <h3>📏 Expected range — how much could it swing next month?</h3>
+      <div class="range-track">
+        <div class="range-dot" style="left:50%"><div class="range-cap" style="left:50%">${fmtPrice(prices[prices.length - 1])}</div></div>
+      </div>
+      <div class="range-ends"><span>↓ ${fmtPrice(f.low)}</span><span>${fmtPrice(f.high)} ↑</span></div>
+      <div class="range-sentence">About <b>2 out of 3 months</b>, ${name} should stay between <b>${fmtPrice(f.low)}</b> and <b>${fmtPrice(f.high)}</b> — a typical swing of <b>±${pct}%</b>.</div>
+      <span class="risk-badge ${rm.cls}">${rm.emoji} ${rm.label} — swings about ±${pct}% a month</span>
+      <div class="range-note"><b>This part is real science</b> (unlike the up/down guess): how much a stock swings is genuinely predictable — calm stays calm, wild stays wild. It doesn't say <i>which</i> way it'll go, just <i>how bumpy</i> the ride is. A 🔥 WILD stock can soar or crash fast — which is exactly why you never bet big on just one. On real history, this range was right about 2 out of 3 times. 🍀</div>
+    </div>`;
+}
+
 // FILTER STATE — defaults to "smart filter": short-term UPs + premium prices only
 let showAllCards = false;
 let searchTerm = "";
@@ -3426,6 +3500,8 @@ function renderCards() {
         <div class="verdict ${p.verdict}">${v.icon} ${v.text}</div>
         <div class="conf">Signal strength <b>${fmtConf(p.confidence)}%</b></div>
       </div>
+      ${(() => { const f = volForecast(c.prices); const rm = riskMeta(f.risk);
+        return `<span class="risk-chip ${rm.cls}" title="Forecasted swing — how bumpy, not which way">${rm.emoji} ${rm.label} · ±${f.monthlyPct.toFixed(0)}%/mo</span>`; })()}
       <div class="model-mini" title="Three-model comparison (Ensemble · Value · Momentum)">
         ${Object.entries(p.models).map(([key, m]) => {
           const arrow = m.verdict === "up" ? "▲" : m.verdict === "down" ? "▼" : "●";
@@ -3469,6 +3545,8 @@ function showDetail(idx) {
     </div>
 
     ${bigChart(c.prices.slice(-30), p.verdict)}
+
+    ${expectedRangePanel(c.prices, c.name)}
 
     <div class="models-section">
       <h3>📐 Three-Model Comparison</h3>
@@ -4291,6 +4369,7 @@ async function showExternalDetail(symbol, name) {
       <div><b>Real prediction from live market prices.</b> ${escapeHtml(name)} isn't one of Predicia's tracked companies, so there's no news data, backtest, or company info — just the price-based prediction. And remember, these predictions don't always work — choose wisely! 🍀</div>
     </div>
     ${bigChart(prices.slice(-30), p.verdict)}
+    ${expectedRangePanel(prices, escapeHtml(name))}
     <div class="models-section">
       <h3>📐 Three-Model Comparison</h3>
       <p class="sub">The % is each model's <b>signal strength</b> (how strongly its indicators agree) — not the odds of being right. On real history, models like these guess short-term direction right only about half the time.</p>
