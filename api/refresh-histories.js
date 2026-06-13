@@ -9,7 +9,10 @@
 // GET /api/refresh-histories?symbols=AAPL,MSFT,...  ->  { refreshed, remaining }
 const SUPABASE_URL = "https://eejamqewfosbwkkhezho.supabase.co";
 const SUPABASE_ANON = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImVlamFtcWV3Zm9zYndra2hlemhvIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODExOTU4NzIsImV4cCI6MjA5Njc3MTg3Mn0.dIkB7ajf2Mnrufxb5uHzM1vOa9qBuZUzZ9OK8oAiw9E";
-const SUPA = { apikey: SUPABASE_ANON, Authorization: "Bearer " + SUPABASE_ANON, "Content-Type": "application/json" };
+// Prefer the server-only service key (works even after we lock `histories`
+// writes to read-only for the public). Falls back to anon until that key is set.
+const WRITE_KEY = process.env.SUPABASE_SERVICE_KEY || SUPABASE_ANON;
+const SUPA = { apikey: WRITE_KEY, Authorization: "Bearer " + WRITE_KEY, "Content-Type": "application/json" };
 const CHUNK = 8;          // companies per call (free feed ~8 credits/min)
 const STALE_HOURS = 20;
 
