@@ -4874,6 +4874,9 @@ document.getElementById("modalBackdrop").addEventListener("click", (e) => {
 
 /* ---------- TRANSACTIONS ---------- */
 function buyShares(ticker, shares, price) {
+  // Guard the inputs at the source: a negative/zero share count or a zero price
+  // would otherwise let cash go UP or mint infinite shares (e.g. via the console).
+  if (!(shares > 0) || !(price > 0) || !isFinite(shares) || !isFinite(price)) return false;
   const cost = shares * price;
   if (cost > portfolio.cash) return false;
   portfolio.cash -= cost;
@@ -4892,6 +4895,7 @@ function buyShares(ticker, shares, price) {
 }
 
 function sellShares(ticker, shares, price) {
+  if (!(shares > 0) || !(price > 0) || !isFinite(shares) || !isFinite(price)) return false;
   const h = portfolio.holdings[ticker];
   if (!h || h.shares < shares - 0.0001) return false;
   const proceeds = shares * price;
