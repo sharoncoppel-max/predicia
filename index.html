@@ -4716,7 +4716,7 @@ function openBuyModal(ticker) {
       return;
     }
     const shares = dollars / price;
-    sharesInput.value = shares.toFixed(4);
+    sharesInput.value = shares.toFixed(6);   // finer precision so a $ amount lands close even on very pricey stocks
     costEl.textContent = fmtMoney(dollars);
     if (dollars > portfolio.cash + 0.005) {
       errorEl.textContent = "Not enough cash! Max " + fmtMoney(portfolio.cash) + ".";
