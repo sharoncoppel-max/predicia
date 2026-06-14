@@ -2563,13 +2563,35 @@ COMPANIES.forEach(c => {
 const livePrices = {};
 COMPANIES.forEach(c => { livePrices[c.ticker] = c.prices[c.prices.length - 1]; });
 
-// Guard against a live quote that's on a different SCALE than the real history
-// (a stale synthetic price, or a data source disagreeing on splits). For a
-// real-data stock we only accept a live price within 0.5x–2x of its trustworthy
-// Twelve Data close — otherwise the splice would fake a giant 30-day swing.
-function acceptLive(c, price) {
-  if (!(price > 0)) return false;
-  if (c && c.realClose > 0) return price >= c.realClose * 0.5 && price <= c.realClose * 2;
+// The live price (Finnhub/Yahoo) and the cached history (Twelve Data) sometimes
+// sit on different SCALES — e.g. after a split, or when the free history is a
+// bit stale. Splicing a $55 live price onto a $32 history faked huge 30-day
+// swings. Instead we REBASE: keep the real history's SHAPE (the % moves) but
+// scale the whole series so its last point equals the live price. Result: the
+// current price is live/correct AND the percentages are real, with no fake jump.
+// We rebase off the immutable raw history (c.rawPrices) so it never compounds,
+// and ignore a live quote that's a gross outlier (>5x off — likely an error).
+function rescaleToLive(c) {
+  const raw = c.rawPrices || c.prices;
+  if (!raw || !raw.length) return c.prices;
+  const close = (c.realClose > 0) ? c.realClose : raw[raw.length - 1];
+  let anchor = (c.liveQuote > 0) ? c.liveQuote : close;
+  let k = (close > 0) ? anchor / close : 1;
+  if (!(k >= 0.2 && k <= 5)) { anchor = close; k = 1; }   // gross outlier → keep raw scale
+  livePrices[c.ticker] = anchor;
+  return (k === 1) ? raw.slice() : raw.map(p => p * k);
+}
+
+// Apply a freshly-fetched live quote to a company (rebases real-data stocks).
+function applyLiveQuote(c, price) {
+  if (!c || !(price > 0)) return false;
+  c.liveQuote = price;
+  if (c.realData && c.rawPrices) {
+    c.prices = rescaleToLive(c);
+  } else {
+    livePrices[c.ticker] = price;
+    c.prices[c.prices.length - 1] = parseFloat(price.toFixed(2));
+  }
   return true;
 }
 
@@ -2792,9 +2814,8 @@ async function _refreshRealPrices() {
       // Apply the quote we just got to the live data so the DOM can show it
       if (quote && quote.price > 0) {
         const co = COMPANIES.find(x => finnhubSymbolFor(x.ticker) === sym);
-        if (co && acceptLive(co, quote.price)) {
-          livePrices[co.ticker] = quote.price;
-          co.prices[co.prices.length - 1] = parseFloat(quote.price.toFixed(2));
+        if (co) {
+          applyLiveQuote(co, quote.price);
           merged[co.ticker] = quote;
           // Lightweight DOM refresh every 5 quotes (don't trash perf)
           if (done % 5 === 0 && typeof refreshLiveDOM === "function") {
@@ -2838,9 +2859,7 @@ async function _refreshRealPrices() {
   for (const c of COMPANIES) {
     if (!merged[c.ticker]) continue;
     const newPrice = merged[c.ticker].price;
-    if (newPrice && newPrice > 0 && acceptLive(c, newPrice)) {
-      livePrices[c.ticker] = newPrice;
-      c.prices[c.prices.length - 1] = parseFloat(newPrice.toFixed(2));
+    if (newPrice && newPrice > 0 && applyLiveQuote(c, newPrice)) {
       applied++;
     }
   }
@@ -4505,19 +4524,11 @@ async function applyRealHistories() {
     (rows || []).forEach(row => {
       const c = COMPANIES.find(co => co.ticker === row.ticker);
       if (c && Array.isArray(row.prices) && row.prices.length >= 25) {
-        c.prices = row.prices.map(Number);
         c.realData = true;
-        // The real Twelve Data close is our trustworthy anchor for this ticker.
-        c.realClose = c.prices[c.prices.length - 1];
-        // Only splice the live price onto the history if it's on the SAME scale.
-        // A leftover synthetic price or a mismatched data source (e.g. DUOL showed
-        // ~$400 live vs a ~$122 real history) would otherwise fake a huge swing.
-        const lp = livePrices[c.ticker];
-        if (lp > 0 && c.realClose > 0 && lp >= c.realClose * 0.5 && lp <= c.realClose * 2) {
-          c.prices[c.prices.length - 1] = lp;     // consistent → use the live tick
-        } else {
-          livePrices[c.ticker] = c.realClose;     // divergent → trust the real history everywhere
-        }
+        c.rawPrices = row.prices.map(Number);                  // immutable real shape
+        c.realClose = c.rawPrices[c.rawPrices.length - 1];      // raw anchor
+        // Rebase onto the live price (if we've fetched one), else show the raw close.
+        c.prices = rescaleToLive(c);
         // Re-derive the simulated signals from the real prices so a "real"
         // prediction isn't part-fake: trend drives analyst+buzz, events drive news.
         c.trend = realDriftOf(c.prices);
