@@ -16,7 +16,11 @@ module.exports = async (req, res) => {
       "&input=" + encodeURIComponent(q) +
       "&format=plaintext&output=json&podstate=Result";
     const r = await fetch(url);
-    if (!r.ok) { res.status(502).json({ error: "wolfram unavailable" }); return; }
+    if (!r.ok) {
+      const body = (await r.text().catch(() => "")).slice(0, 200);
+      res.status(502).json({ error: "wolfram unavailable", upstreamStatus: r.status, detail: body });
+      return;
+    }
     const data = await r.json();
     const qr = data && data.queryresult;
     if (!qr || !qr.success) {
