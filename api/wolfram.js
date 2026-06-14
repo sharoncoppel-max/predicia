@@ -5,7 +5,9 @@
 // Returns { ok, pods:[{title, text}] } on success, or { ok:false, message }
 // when Wolfram can't parse the question.
 module.exports = async (req, res) => {
-  const appid = process.env.WOLFRAM_APP_ID;
+  // Trim defensively — a stray space/newline pasted into the env var would
+  // otherwise be sent to Wolfram and rejected as an "invalid appid".
+  const appid = (process.env.WOLFRAM_APP_ID || "").trim();
   if (!appid) { res.status(500).json({ error: "WOLFRAM_APP_ID not set on the server" }); return; }
 
   const q = String((req.query && req.query.q) || "").trim().slice(0, 200);
