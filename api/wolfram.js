@@ -36,3 +36,5 @@ module.exports = async (req, res) => {
     res.status(502).json({ error: "wolfram failed" });
   }
 };
+
+// redeploy: load WOLFRAM_APP_ID 133940
