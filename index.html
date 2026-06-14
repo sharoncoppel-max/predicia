@@ -1544,6 +1544,34 @@
     padding: 0;
     transition: transform .15s ease, background .15s ease, color .15s ease;
   }
+  /* Money Math button (header) */
+  .math-btn {
+    height: 44px;
+    padding: 0 14px;
+    border-radius: 999px;
+    background: var(--brand-soft);
+    border: 1px solid var(--border);
+    color: var(--brand);
+    font-weight: 700;
+    font-size: 13px;
+    cursor: pointer;
+    white-space: nowrap;
+    transition: transform .15s ease, filter .15s ease;
+  }
+  .math-btn:hover { transform: scale(1.05); filter: brightness(1.05); }
+  /* Money Math modal */
+  .math-chips { display: flex; flex-wrap: wrap; gap: 8px; margin: 10px 0 4px; }
+  .math-chip {
+    font-size: 12px; padding: 6px 10px; border-radius: 999px; cursor: pointer;
+    background: var(--card-soft); border: 1px solid var(--border); color: var(--text-1);
+  }
+  .math-chip:hover { border-color: var(--brand); color: var(--brand); }
+  .math-results { margin-top: 14px; max-height: 50vh; overflow-y: auto; }
+  .math-pod { padding: 10px 0; border-top: 1px solid var(--border); }
+  .math-pod:first-child { border-top: none; }
+  .math-pod-title { font-size: 11px; text-transform: uppercase; letter-spacing: .04em; color: var(--text-2); margin-bottom: 4px; }
+  .math-pod-text { font-size: 14px; color: var(--text-1); white-space: pre-wrap; line-height: 1.5; }
+  .math-note { font-size: 11px; color: var(--text-3); margin-top: 12px; line-height: 1.5; }
   .theme-toggle:hover {
     transform: scale(1.05);
     color: var(--brand);
@@ -1693,6 +1721,7 @@
     </div>
     <div class="header-actions">
       <div class="live-pill status-demo" id="livePill" title="Click to refresh live prices from Yahoo Finance"><span class="live-dot"></span><span id="liveStatus">DEMO</span></div>
+      <button class="math-btn" id="mathBtn" title="Ask a money-math question — compound interest, 'what if I invest…', and more">🧮 Money Math</button>
       <button class="theme-toggle paper-toggle" id="paperToggle" aria-label="Paper Trading Mode" title="Paper Trading Mode — virtual portfolio">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
           <rect x="2" y="7" width="20" height="14" rx="2"></rect>
@@ -4883,6 +4912,72 @@ document.getElementById("modalClose").addEventListener("click", closeModal);
 document.getElementById("modalBackdrop").addEventListener("click", (e) => {
   if (e.target === e.currentTarget) closeModal();
 });
+
+/* ---------- MONEY MATH (Wolfram|Alpha) ----------
+   A trustworthy maths/money helper. Real computation from Wolfram|Alpha (via a
+   server proxy that hides the App ID), not a prediction. Pod text is external,
+   so everything is escapeHtml'd before rendering. */
+const MATH_EXAMPLES = [
+  "invest 25 a month for 11 years at 8%",
+  "compound interest on 500 at 7% for 10 years",
+  "what is a dividend",
+  "double 100 at 6% per year"
+];
+function openMathModal() {
+  document.getElementById("modalContent").innerHTML = `
+    <h3>🧮 Money Math</h3>
+    <p class="modal-sub">Ask a money or maths question. Answers are computed by Wolfram|Alpha — real maths you can trust, not a guess.</p>
+    <div class="modal-input-group">
+      <input type="text" id="mathInput" maxlength="200" placeholder="e.g. invest 25 a month for 11 years at 8%" />
+    </div>
+    <div class="math-chips" id="mathChips">
+      ${MATH_EXAMPLES.map(q => `<span class="math-chip">${escapeHtml(q)}</span>`).join("")}
+    </div>
+    <div class="modal-actions">
+      <button class="btn-confirm-buy" id="mathAsk">Ask ▶</button>
+    </div>
+    <div class="math-results" id="mathResults"></div>
+    <div class="math-note">Powered by Wolfram|Alpha. Tip: write amounts plainly, like "invest 50 a month for 5 years at 7%".</div>`;
+  document.getElementById("modalBackdrop").style.display = "grid";
+  const input = document.getElementById("mathInput");
+  input.focus();
+  async function ask(q) {
+    const query = (q || input.value || "").trim();
+    if (!query) return;
+    input.value = query;
+    const results = document.getElementById("mathResults");
+    const btn = document.getElementById("mathAsk");
+    results.innerHTML = `<div class="math-pod"><div class="math-pod-text">Working it out… 🧮</div></div>`;
+    if (btn) btn.disabled = true;
+    try {
+      const r = await fetch("/api/wolfram?q=" + encodeURIComponent(query));
+      const data = await r.json().catch(() => ({}));
+      if (!r.ok || data.error) {
+        const msg = (data.error === "WOLFRAM_APP_ID not set on the server")
+          ? "Money Math isn't switched on yet (the Wolfram key still needs adding)."
+          : "Couldn't reach the maths service — try again in a moment.";
+        results.innerHTML = `<div class="math-pod"><div class="math-pod-text">${msg}</div></div>`;
+      } else if (!data.ok) {
+        results.innerHTML = `<div class="math-pod"><div class="math-pod-text">${escapeHtml(data.message || "Couldn't work that one out — try rephrasing.")}</div></div>`;
+      } else if (!data.pods || !data.pods.length) {
+        results.innerHTML = `<div class="math-pod"><div class="math-pod-text">No answer came back — try rephrasing.</div></div>`;
+      } else {
+        results.innerHTML = data.pods.map(p => `
+          <div class="math-pod">
+            <div class="math-pod-title">${escapeHtml(p.title)}</div>
+            <div class="math-pod-text">${escapeHtml(p.text)}</div>
+          </div>`).join("");
+      }
+    } catch (e) {
+      results.innerHTML = `<div class="math-pod"><div class="math-pod-text">Couldn't reach the maths service — try again in a moment.</div></div>`;
+    }
+    if (btn) btn.disabled = false;
+  }
+  document.getElementById("mathAsk").addEventListener("click", () => ask());
+  input.addEventListener("keydown", e => { if (e.key === "Enter") ask(); });
+  Array.from(document.querySelectorAll("#mathChips .math-chip")).forEach(c => c.addEventListener("click", () => ask(c.textContent)));
+}
+document.getElementById("mathBtn").addEventListener("click", openMathModal);
 
 /* ---------- TRANSACTIONS (server-validated) ----------
    Buy/sell are sent to the server, which prices them against the real market,
