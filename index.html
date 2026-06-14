@@ -4918,17 +4918,17 @@ document.getElementById("modalBackdrop").addEventListener("click", (e) => {
    server proxy that hides the App ID), not a prediction. Pod text is external,
    so everything is escapeHtml'd before rendering. */
 const MATH_EXAMPLES = [
-  "invest 25 a month for 11 years at 8%",
+  "future value of $25 per month for 11 years at 8%",
   "compound interest on 500 at 7% for 10 years",
   "what is a dividend",
-  "double 100 at 6% per year"
+  "500 * (1.07)^10"
 ];
 function openMathModal() {
   document.getElementById("modalContent").innerHTML = `
     <h3>🧮 Money Math</h3>
     <p class="modal-sub">Ask a money or maths question. Answers are computed by Wolfram|Alpha — real maths you can trust, not a guess.</p>
     <div class="modal-input-group">
-      <input type="text" id="mathInput" maxlength="200" placeholder="e.g. invest 25 a month for 11 years at 8%" />
+      <input type="text" id="mathInput" maxlength="200" placeholder="e.g. future value of $25 per month for 11 years at 8%" />
     </div>
     <div class="math-chips" id="mathChips">
       ${MATH_EXAMPLES.map(q => `<span class="math-chip">${escapeHtml(q)}</span>`).join("")}
@@ -4937,7 +4937,7 @@ function openMathModal() {
       <button class="btn-confirm-buy" id="mathAsk">Ask ▶</button>
     </div>
     <div class="math-results" id="mathResults"></div>
-    <div class="math-note">Powered by Wolfram|Alpha. Tip: write amounts plainly, like "invest 50 a month for 5 years at 7%".</div>`;
+    <div class="math-note">Powered by Wolfram|Alpha. Tip: try "future value of $50 per month for 5 years at 7%" or "compound interest on 500 at 7% for 10 years".</div>`;
   document.getElementById("modalBackdrop").style.display = "grid";
   const input = document.getElementById("mathInput");
   input.focus();

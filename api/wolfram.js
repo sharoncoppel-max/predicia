@@ -26,7 +26,7 @@ module.exports = async (req, res) => {
     const data = await r.json();
     const qr = data && data.queryresult;
     if (!qr || !qr.success) {
-      res.status(200).json({ ok: false, message: "Hmm, I couldn't work that one out. Try rephrasing — e.g. \"invest 25 a month for 11 years at 8%\" or \"compound interest on 500 at 7% for 10 years\"." });
+      res.status(200).json({ ok: false, message: "Hmm, I couldn't work that one out. Try rephrasing — e.g. \"future value of $25 per month for 11 years at 8%\" or \"compound interest on 500 at 7% for 10 years\"." });
       return;
     }
     const pods = (qr.pods || [])
