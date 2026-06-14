@@ -2563,6 +2563,16 @@ COMPANIES.forEach(c => {
 const livePrices = {};
 COMPANIES.forEach(c => { livePrices[c.ticker] = c.prices[c.prices.length - 1]; });
 
+// Guard against a live quote that's on a different SCALE than the real history
+// (a stale synthetic price, or a data source disagreeing on splits). For a
+// real-data stock we only accept a live price within 0.5x–2x of its trustworthy
+// Twelve Data close — otherwise the splice would fake a giant 30-day swing.
+function acceptLive(c, price) {
+  if (!(price > 0)) return false;
+  if (c && c.realClose > 0) return price >= c.realClose * 0.5 && price <= c.realClose * 2;
+  return true;
+}
+
 function tickMarket() {
   // Don't update if a modal is open (user is mid-transaction)
   const modal = document.getElementById("modalBackdrop");
@@ -2782,7 +2792,7 @@ async function _refreshRealPrices() {
       // Apply the quote we just got to the live data so the DOM can show it
       if (quote && quote.price > 0) {
         const co = COMPANIES.find(x => finnhubSymbolFor(x.ticker) === sym);
-        if (co) {
+        if (co && acceptLive(co, quote.price)) {
           livePrices[co.ticker] = quote.price;
           co.prices[co.prices.length - 1] = parseFloat(quote.price.toFixed(2));
           merged[co.ticker] = quote;
@@ -2828,7 +2838,7 @@ async function _refreshRealPrices() {
   for (const c of COMPANIES) {
     if (!merged[c.ticker]) continue;
     const newPrice = merged[c.ticker].price;
-    if (newPrice && newPrice > 0) {
+    if (newPrice && newPrice > 0 && acceptLive(c, newPrice)) {
       livePrices[c.ticker] = newPrice;
       c.prices[c.prices.length - 1] = parseFloat(newPrice.toFixed(2));
       applied++;
@@ -4497,7 +4507,17 @@ async function applyRealHistories() {
       if (c && Array.isArray(row.prices) && row.prices.length >= 25) {
         c.prices = row.prices.map(Number);
         c.realData = true;
-        if (livePrices[c.ticker] !== undefined) c.prices[c.prices.length - 1] = livePrices[c.ticker];
+        // The real Twelve Data close is our trustworthy anchor for this ticker.
+        c.realClose = c.prices[c.prices.length - 1];
+        // Only splice the live price onto the history if it's on the SAME scale.
+        // A leftover synthetic price or a mismatched data source (e.g. DUOL showed
+        // ~$400 live vs a ~$122 real history) would otherwise fake a huge swing.
+        const lp = livePrices[c.ticker];
+        if (lp > 0 && c.realClose > 0 && lp >= c.realClose * 0.5 && lp <= c.realClose * 2) {
+          c.prices[c.prices.length - 1] = lp;     // consistent → use the live tick
+        } else {
+          livePrices[c.ticker] = c.realClose;     // divergent → trust the real history everywhere
+        }
         // Re-derive the simulated signals from the real prices so a "real"
         // prediction isn't part-fake: trend drives analyst+buzz, events drive news.
         c.trend = realDriftOf(c.prices);
