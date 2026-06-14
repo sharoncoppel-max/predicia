@@ -25,6 +25,11 @@ module.exports = async (req, res) => {
   symbols = Array.from(new Set(symbols));
   if (!symbols.length) { res.status(400).json({ error: "no symbols" }); return; }
 
+  // `force` = re-fetch these even if their cache looks fresh (used to repair a
+  // ticker whose cached data is wrong). Forced symbols jump the queue.
+  const force = new Set(String((req.query && req.query.force) || "")
+    .split(",").map(s => s.trim().toUpperCase()).filter(s => /^[A-Z.]{1,8}$/.test(s)));
+
   // Which ones are already fresh in the cache?
   const ageH = {};
   try {
@@ -33,8 +38,10 @@ module.exports = async (req, res) => {
     if (Array.isArray(rows)) rows.forEach(row => { ageH[row.ticker] = (Date.now() - new Date(row.updated_at).getTime()) / 3.6e6; });
   } catch (e) { /* table missing -> everything is "stale" */ }
 
-  const stale = symbols.filter(s => !(s in ageH) || ageH[s] > STALE_HOURS);
+  const stale = symbols.filter(s => force.has(s) || !(s in ageH) || ageH[s] > STALE_HOURS);
   if (!stale.length) { res.status(200).json({ refreshed: 0, remaining: 0, allFresh: true }); return; }
+  // Forced (broken) symbols first so a repair always gets fetched this call.
+  stale.sort((a, b) => (force.has(b) ? 1 : 0) - (force.has(a) ? 1 : 0));
   const batch = stale.slice(0, CHUNK);
 
   try {

@@ -1721,6 +1721,7 @@
     </div>
     <div class="header-actions">
       <div class="live-pill status-demo" id="livePill" title="Click to refresh live prices from Yahoo Finance"><span class="live-dot"></span><span id="liveStatus">DEMO</span></div>
+      <button class="theme-toggle" id="refreshBtn" aria-label="Refresh prices" title="Refresh live prices &amp; auto-fix any wrong-looking stock" style="font-size:18px">🔄</button>
       <button class="math-btn" id="mathBtn" title="Ask a money-math question — compound interest, 'what if I invest…', and more">🧮 Money Math</button>
       <button class="theme-toggle paper-toggle" id="paperToggle" aria-label="Paper Trading Mode" title="Paper Trading Mode — virtual portfolio">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -4562,6 +4563,60 @@ async function initRealHistories() {
     if (res.remaining > 0) setTimeout(initRealHistories, 65000); // keep filling, ~1/min (rate limit)
   }
 }
+
+// ---- Self-healing prices ----
+// A real stock almost never moves >60% in a SINGLE day, so such a jump in the
+// recent window means a bad data point in the cached history. Find those.
+function brokenTickers() {
+  const bad = [];
+  for (const c of COMPANIES) {
+    if (!c.realData || !Array.isArray(c.prices) || c.prices.length < 2) continue;
+    const w = c.prices.slice(-30);
+    let worst = 0;
+    for (let i = 1; i < w.length; i++) {
+      if (w[i - 1] > 0) { const m = Math.abs(w[i] / w[i - 1] - 1); if (m > worst) worst = m; }
+    }
+    if (worst > 0.60) bad.push(c);
+  }
+  return bad;
+}
+
+// Re-pull real history for any wrong-looking stock and swap the fresh data in.
+let repairInFlight = false;
+async function autoRepairPrices(showStatus) {
+  if (repairInFlight) return 0;
+  const bad = brokenTickers();
+  if (!bad.length) { if (showStatus) setLiveStatus("live", "PRICES OK ✓"); return 0; }
+  repairInFlight = true;
+  try {
+    const fix = bad.slice(0, 8).map(c => finnhubSymbolFor(c.ticker)).filter(Boolean);
+    if (showStatus) setLiveStatus("loading", "FIXING " + fix.length + " price" + (fix.length > 1 ? "s" : "") + "…");
+    const all = COMPANIES.map(c => finnhubSymbolFor(c.ticker)).filter(Boolean).join(",");
+    await fetch(HIST_REFRESH_URL + "?symbols=" + encodeURIComponent(all) + "&force=" + encodeURIComponent(fix.join(",")));
+    await applyRealHistories();             // swaps fresh data in + re-renders
+    if (showStatus) setLiveStatus("live", "FIXED ✓");
+  } catch (e) { /* leave as-is on failure */ }
+  finally { repairInFlight = false; }
+  return bad.length;
+}
+
+// Manual 🔄 button: re-fetch live prices, then auto-fix anything wrong-looking.
+(function () {
+  const btn = document.getElementById("refreshBtn");
+  if (!btn) return;
+  btn.addEventListener("click", async () => {
+    if (btn.disabled) return;
+    btn.disabled = true; btn.style.opacity = "0.6";
+    btn.style.transition = "transform .6s linear"; btn.style.transform = "rotate(360deg)";
+    try {
+      await refreshRealPrices();      // live prices, rebased onto the real history
+      await autoRepairPrices(true);   // repair any broken-looking stock
+    } catch (e) {}
+    btn.disabled = false; btn.style.opacity = ""; btn.style.transform = "";
+  });
+})();
+// Auto-check once shortly after load: silently repair any wrong-looking stock.
+setTimeout(() => { autoRepairPrices(false).catch(() => {}); }, 9000);
 
 function switchView(view) {
   currentView = view;
