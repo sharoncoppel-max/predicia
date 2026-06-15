@@ -3530,9 +3530,12 @@ function renderCards() {
   const grid = document.getElementById("cards");
   grid.innerHTML = "";
   let shown = 0;
-  COMPANIES.forEach((c, idx) => {
-    const p = predicia(c);
-    if (!shouldShowCard(c, p)) return;
+  // Compute + filter, then lead with the STRONGEST signals so the top of the
+  // page shows the most confident predictions first (not just list order).
+  const _cards = COMPANIES.map((c, idx) => ({ c, idx, p: predicia(c) }))
+    .filter(x => shouldShowCard(x.c, x.p))
+    .sort((a, b) => b.p.confidence - a.p.confidence);
+  _cards.forEach(({ c, idx, p }) => {
     shown++;
     const last = c.prices[c.prices.length - 1];
     const dayBefore = c.prices[c.prices.length - 2];
