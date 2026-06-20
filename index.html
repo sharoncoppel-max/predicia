@@ -1581,6 +1581,8 @@
     display: flex;
     align-items: center;
     gap: 10px;
+    flex-wrap: wrap;
+    justify-content: flex-end;
   }
 
   /* Live market indicator */
@@ -1655,6 +1657,12 @@
     .wrap { padding: 20px 16px 60px; }
     .hero h1 { font-size: 22px; }
     .price { font-size: 20px; }
+    /* Keep the header on one tidy row on phones: tighten gaps, drop the date,
+       and shrink Money Math to just its icon so nothing overflows the screen. */
+    .header-actions { gap: 6px; }
+    .date { display: none; }
+    .math-btn { font-size: 0; width: 44px; padding: 0; display: grid; place-items: center; border-radius: 999px; }
+    .math-btn::before { content: "🧮"; font-size: 18px; }
     /* Backtest rows: the 4 fixed columns squeeze the win-rate bar to 0 on
        narrow screens. Reflow to label + numbers on row 1, full-width bar on row 2. */
     .stock-bt-row {
@@ -4401,12 +4409,17 @@ async function showExternalDetail(symbol, name) {
   detail.innerHTML = `<div style="padding:24px;text-align:center;color:var(--text-2)">Fetching real prices for ${escapeHtml(name)}…</div>`;
   detail.scrollIntoView({ behavior: "smooth", block: "start" });
   let prices = null;
+  let busy = false;
   try {
     const r = await fetch("/api/history?symbol=" + encodeURIComponent(symbol));
-    if (r.ok) { const j = await r.json(); if (Array.isArray(j.prices) && j.prices.length >= 25) prices = j.prices; }
+    const j = await r.json().catch(() => ({}));
+    if (r.ok && Array.isArray(j.prices) && j.prices.length >= 25) prices = j.prices;
+    else if (j && j.detail && /credit|limit|per minute|out of/i.test(j.detail)) busy = true;  // free-tier rate limit, not a real failure
   } catch (e) {}
   if (!prices) {
-    detail.innerHTML = `<div style="padding:24px;color:var(--text-2)">Couldn't get enough price history for ${escapeHtml(name)} to predict it. Try a bigger US-listed company (or its ticker, like AAPL).</div>`;
+    detail.innerHTML = busy
+      ? `<div style="padding:24px;color:var(--text-2)">📡 The price service is busy right now — the free plan only allows a few look-ups per minute. Wait about a minute, then try ${escapeHtml(name)} again.</div>`
+      : `<div style="padding:24px;color:var(--text-2)">Couldn't get enough price history for ${escapeHtml(name)} to predict it. Try a bigger US-listed company (or its ticker, like AAPL).</div>`;
     return;
   }
   const ext = makeExternalCompany(symbol, name, prices);
