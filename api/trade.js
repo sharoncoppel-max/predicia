@@ -11,19 +11,20 @@ module.exports = async (req, res) => {
   if (!H) { res.status(500).json({ error: "SUPABASE_SERVICE_KEY not set on the server" }); return; }
 
   const body = await A.readBody(req);
-  const token = String(body.token || "");
+  const name = A.cleanUsername(body.username);
+  const pin = A.cleanPin(body.pin);
   const action = body.action === "sell" ? "sell" : body.action === "buy" ? "buy" : null;
   const ticker = String(body.ticker || "").trim().toUpperCase();
   const shares = Number(body.shares);
 
-  if (token.length < 16) { res.status(400).json({ error: "bad token" }); return; }
+  if (!name.ok || !pin) { res.status(400).json({ error: "bad login" }); return; }
   if (!action) { res.status(400).json({ error: "action must be buy or sell" }); return; }
   if (!/^[A-Z.]{1,8}$/.test(ticker)) { res.status(400).json({ error: "bad ticker" }); return; }
   if (!(shares > 0) || !Number.isFinite(shares)) { res.status(400).json({ error: "shares must be > 0" }); return; }
 
   try {
-    const acct = await A.getAccount(H, A.hashToken(token));
-    if (!acct) { res.status(404).json({ error: "no account — register first" }); return; }
+    const acct = await A.getAccount(H, A.deriveKey(name.name, pin));
+    if (!acct) { res.status(404).json({ error: "log in first" }); return; }
     A.applyMonthlyReset(acct);
     acct.holdings = acct.holdings || {};
 

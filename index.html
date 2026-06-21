@@ -1803,7 +1803,7 @@
         <h1>📊 Paper Trading Mode</h1>
         <p>Everyone starts with <b>$1,000</b> in virtual cash and <b>resets fresh on the 1st of each month</b> — whoever's richest at month's end is crowned champion! Buy and sell any stock at live prices.</p>
       </div>
-      <button class="btn-secondary" id="resetPortfolio">Reset Portfolio</button>
+      <button class="btn-secondary" id="logoutBtn" style="display:none">Log out</button>
     </div>
 
     <div id="winnerBanner"></div>
@@ -4170,17 +4170,14 @@ const PT_STARTING_CASH = 1000;
 // against real prices. The browser keeps a read-only CACHE of that state plus a
 // secret "pass" (token) that proves which account is ours. No score can be faked
 // in the browser, and without the matching token you can't touch anyone's row.
-const TOKEN_KEY = "predicia-token-v1";
-function getToken() {
-  let t = null;
-  try { t = localStorage.getItem(TOKEN_KEY); } catch (e) {}
-  if (!t || t.length < 16) {
-    t = "p_" + ((window.crypto && crypto.randomUUID) ? crypto.randomUUID().replace(/-/g, "")
-      : (Date.now().toString(36) + Math.random().toString(36).slice(2) + Math.random().toString(36).slice(2)));
-    try { localStorage.setItem(TOKEN_KEY, t); } catch (e) {}
-  }
-  return t;
-}
+// LOGIN = { username, pin }. Your account is keyed off this pair on the server,
+// so the SAME name + PIN restores your shares on ANY device, even after clearing
+// data. We cache it here so you don't retype on your own device. The PIN is what
+// keeps it cheat-proof: nobody can reach your account without it.
+const LOGIN_KEY = "predicia-login-v1";
+function loadLogin() { try { const l = JSON.parse(localStorage.getItem(LOGIN_KEY)); if (l && l.username && l.pin) return { username: l.username, pin: String(l.pin) }; } catch (e) {} return null; }
+function saveLogin() { try { localStorage.setItem(LOGIN_KEY, JSON.stringify(login)); } catch (e) {} }
+let login = loadLogin();
 
 let portfolio = { cash: PT_STARTING_CASH, holdings: {}, month: currentMonth(), value: PT_STARTING_CASH };
 let currentView = "dashboard"; // "dashboard" | "paper"
@@ -4193,6 +4190,9 @@ async function gameFetch(path, body) {
   } catch (e) { return { ok: false, status: 0, data: { error: "offline" } }; }
 }
 
+// Add the player's login to any game request.
+function withLogin(extra) { return Object.assign({ username: login.username, pin: login.pin }, extra || {}); }
+
 // Copy the server's authoritative state into our local cache for rendering.
 function applyServerState(s) {
   if (!s || typeof s.cash !== "number") return;
@@ -4201,16 +4201,11 @@ function applyServerState(s) {
 }
 
 // Pull the latest state from the server (on entering the game + after trades).
-// If this browser has a remembered name but no server account yet (returning
-// player, or first run after the cheat-proof upgrade), create it on the fly.
 async function syncAccount() {
-  if (!player || !player.username) return;
-  let res = await gameFetch("account", { token: getToken() });
-  if (!res.ok && res.status === 404) {
-    res = await gameFetch("register", { token: getToken(), username: player.username });
-    if (!res.ok) { player = null; savePlayer(); return; }  // cached name no longer valid → re-pick
-  }
+  if (!login) return;
+  const res = await gameFetch("account", withLogin());
   if (res.ok) applyServerState(res.data);
+  else if (res.status === 404) { login = null; saveLogin(); player = null; savePlayer(); }  // stale login → ask again
 }
 
 function currentPriceOf(ticker) {
@@ -4257,7 +4252,7 @@ function escapeHtml(s) { return String(s).replace(/[&<>"']/g, c => ({ "&": "&amp
 
 // Player identity for this browser: { username, rows: { "YYYY-MM": rowId } }
 const PLAYER_KEY = "predicia-player-v1";
-let player = loadPlayer();
+let player = login ? { username: login.username } : loadPlayer();
 function loadPlayer() { try { const p = JSON.parse(localStorage.getItem(PLAYER_KEY)); if (p && p.username) return { username: p.username }; } catch (e) {} return null; }
 function savePlayer() { try { localStorage.setItem(PLAYER_KEY, JSON.stringify(player)); } catch (e) {} }
 
@@ -4285,34 +4280,43 @@ async function fetchLeaderboard() {
 
 // First time in, ask for a username, create the row, then continue.
 function ensurePlayer(after) {
-  if (player && player.username) { if (after) after(); return; }
+  if (login && player && player.username) { if (after) after(); return; }
   document.getElementById("modalContent").innerHTML = `
-    <h3>🏆 Pick your investor name</h3>
-    <p class="modal-sub">This shows on the leaderboard for everyone — keep it friendly!</p>
+    <h3>🏆 Log in to play</h3>
+    <p class="modal-sub">Pick a username and a secret PIN. Use the <b>same name + PIN</b> to get your money &amp; shares back on any device. New here? This makes your account.</p>
     <div class="modal-input-group">
       <label>Username (3–16 characters)</label>
-      <input type="text" id="unameInput" maxlength="16" placeholder="e.g. StockStar" />
+      <input type="text" id="unameInput" maxlength="16" placeholder="e.g. StockStar" autocomplete="off" />
+    </div>
+    <div class="modal-input-group">
+      <label>Secret PIN (4–6 numbers — remember it!)</label>
+      <input type="password" id="pinInput" inputmode="numeric" maxlength="6" placeholder="e.g. 4827" autocomplete="off" />
     </div>
     <div class="modal-error" id="unameError"></div>
     <div class="modal-actions">
-      <button class="btn-confirm-buy" id="unameSave">Start playing ▶</button>
+      <button class="btn-confirm-buy" id="unameSave">Log in / Create ▶</button>
     </div>`;
   document.getElementById("modalBackdrop").style.display = "grid";
   const input = document.getElementById("unameInput");
+  const pinIn = document.getElementById("pinInput");
   const err = document.getElementById("unameError");
   input.focus();
   async function save() {
     const c = checkUsername(input.value);
     if (!c.ok) { err.textContent = c.msg; return; }
+    const pin = String(pinIn.value || "").trim();
+    if (!/^[0-9]{4,6}$/.test(pin)) { err.textContent = "Your PIN must be 4 to 6 numbers."; return; }
     const btn = document.getElementById("unameSave");
-    if (btn) { btn.disabled = true; btn.textContent = "Starting…"; }
-    // Create the account SERVER-side (the server validates the name too).
-    const res = await gameFetch("register", { token: getToken(), username: c.name });
+    if (btn) { btn.disabled = true; btn.textContent = "Logging in…"; }
+    // Log in OR create the account, server-side (it checks the name + PIN).
+    const res = await gameFetch("register", { username: c.name, pin: pin });
     if (!res.ok) {
-      err.textContent = res.data.error || "Couldn't start — please try again.";
-      if (btn) { btn.disabled = false; btn.textContent = "Start playing ▶"; }
+      err.textContent = res.data.error || "Couldn't log in — please try again.";
+      if (btn) { btn.disabled = false; btn.textContent = "Log in / Create ▶"; }
       return;
     }
+    login = { username: c.name, pin: pin };
+    saveLogin();
     applyServerState(res.data);
     closeModal();
     // Re-render so the hero shows "👤 <name>" and the rank stat picks up.
@@ -4320,7 +4324,8 @@ function ensurePlayer(after) {
     if (after) after();
   }
   document.getElementById("unameSave").addEventListener("click", save);
-  input.addEventListener("keydown", e => { if (e.key === "Enter") save(); });
+  pinIn.addEventListener("keydown", e => { if (e.key === "Enter") save(); });
+  input.addEventListener("keydown", e => { if (e.key === "Enter") pinIn.focus(); });
 }
 
 function renderWinnerBanner(winner) {
@@ -4701,6 +4706,8 @@ function renderPaperTrading() {
   // Your name at the top of your portfolio
   const heroH1 = document.querySelector("#paperTradingView .paper-hero h1");
   if (heroH1) heroH1.textContent = (player && player.username) ? "👤 " + player.username : "📊 Paper Trading Mode";
+  const logoutBtn = document.getElementById("logoutBtn");
+  if (logoutBtn) logoutBtn.style.display = login ? "" : "none";
   // Summary
   const cash = portfolio.cash;
   const held = portfolioHoldingsValue();
@@ -5101,15 +5108,17 @@ document.getElementById("mathBtn").addEventListener("click", openMathModal);
    checks them, and updates the authoritative account. We just apply whatever
    state it returns. Returns true on success, or an error string to show. */
 async function buyShares(ticker, shares, name) {
+  if (!login) return "Please log in first.";
   if (!(shares > 0) || !isFinite(shares)) return "Enter a number of shares greater than 0.";
-  const res = await gameFetch("trade", { token: getToken(), action: "buy", ticker: ticker, shares: shares, name: name });
+  const res = await gameFetch("trade", withLogin({ action: "buy", ticker: ticker, shares: shares, name: name }));
   if (res.ok) { applyServerState(res.data); return true; }
   return res.data.error || "Couldn't buy — please try again.";
 }
 
 async function sellShares(ticker, shares) {
+  if (!login) return "Please log in first.";
   if (!(shares > 0) || !isFinite(shares)) return "Enter a number of shares greater than 0.";
-  const res = await gameFetch("trade", { token: getToken(), action: "sell", ticker: ticker, shares: shares });
+  const res = await gameFetch("trade", withLogin({ action: "sell", ticker: ticker, shares: shares }));
   if (res.ok) { applyServerState(res.data); return true; }
   return res.data.error || "Couldn't sell — please try again.";
 }
@@ -5187,13 +5196,21 @@ function spawnConfetti(x, y) {
   }
 }
 
-/* ---------- RESET ----------
-   No manual reset in the cheat-proof model: zeroing your own losses mid-month
-   would be a cheat. Seasons reset automatically on the 1st (server-side), so
-   the old button is hidden. */
+/* ---------- LOG OUT ----------
+   No manual portfolio reset (zeroing your own losses mid-month would be a
+   cheat; seasons reset automatically on the 1st). Instead: log out, which just
+   forgets the login on THIS device so you (or someone else) can sign in with a
+   different name + PIN. Your account stays safe on the server. */
 (function () {
-  const b = document.getElementById("resetPortfolio");
-  if (b) b.style.display = "none";
+  const b = document.getElementById("logoutBtn");
+  if (!b) return;
+  b.addEventListener("click", () => {
+    if (!confirm("Log out on this device? Your shares are saved — sign back in any time with your username + PIN.")) return;
+    login = null; saveLogin();
+    player = null; savePlayer();
+    portfolio = { cash: PT_STARTING_CASH, holdings: {}, month: currentMonth(), value: PT_STARTING_CASH };
+    ensurePlayer(() => { syncAccount().then(() => { renderPaperTrading(); refreshLeaderboard(); }); });
+  });
 })();
 
 // Buy-grid search — find any company by name or ticker.
