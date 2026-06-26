@@ -1886,7 +1886,8 @@
 
 /* ---------- DATA ---------- */
 
-const TODAY = "June 9, 2026"; // shown on header
+// Header date — always the real current date (was hardcoded, so it froze).
+const TODAY = new Date().toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" });
 
 // Each company has a 30-day price history (oldest -> newest)
 // and a list of recent events with sentiment.
